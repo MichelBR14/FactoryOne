@@ -5,3 +5,7 @@ resources/
 .env
 .env.*
 !.env.example
+
+referencia/
+mta_archives/
+mta-op*
