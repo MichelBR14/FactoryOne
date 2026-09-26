@@ -1,0 +1,7 @@
+node_modules/
+dist/
+resources/
+*.mtar
+.env
+.env.*
+!.env.example
