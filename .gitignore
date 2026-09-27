@@ -9,3 +9,6 @@ resources/
 referencia/
 mta_archives/
 mta-op*
+*.module/
+Makefile*.mta
+.*_mta_build_tmp/

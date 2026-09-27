@@ -5,10 +5,22 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf --glob resources mta_archives *.module",
+    "build:module": "ui5 build --dest factoreone.module --clean-dest && node scripts/generate-webclient-extension.mjs",
+    "compress": "node scripts/compress.mjs",
+    "build": "mbt build"
   },
   "devDependencies": {
+    "@openui5/types": "~1.120.50",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.0.0",
+    "@ui5/cli": "^4.0.70",
+    "archiver": "^7.0.1",
+    "js-yaml": "^4.1.1",
+    "rimraf": "^6.1.3",
     "typescript": "^5.6.0",
+    "ui5-tooling-transpile": "^3.13.1",
     "vitest": "^2.1.0"
   }
 }

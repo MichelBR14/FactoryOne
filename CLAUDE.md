@@ -40,10 +40,27 @@ Comunicação: sempre "FactoreOne **para** SAP Business One". Não usar "SAP" no
 
 ### 2.1 Ambiente de desenvolvimento (já configurado)
 - Node.js 24 LTS, npm 11, GNU Make 4.4.1, Cloud MTA Build Tool (`mbt`) 1.2.47, VS Code com `vscode-mta-tools`.
-- Pendente: plugin do SAP B1 Web Client para VS Code (wizard), Web Client Inspector, modo desenvolvedor do Web Client no ambiente de dev.
+- SDK do SAP B1 (FP 2608) instalado em `C:\Program Files (x86)\SAP\SAP Business One SDK\`; o plugin do Web Client para VS Code (wizard) está em `Tools\WebClientVSCodePlugin` (v1.5.0, 2026-08). Ele é usado só como **referência de formato**, não para gerar o projeto (ver 2.2).
+- Pendente: Web Client Inspector, modo desenvolvedor do Web Client no ambiente de dev.
 
-### 2.2 Scaffold — importante
-O esqueleto do projeto deve ser criado pelo **wizard do plugin oficial da SAP para VS Code**, com o tipo **app Fiori/SAPUI5** (não UI API). Ele gera `mta.yaml`, `manifest.json` e configurações de execução no formato que o Extension Manager espera. **Não invente a estrutura do `mta.yaml` do zero.** Se o scaffold não existir no repositório, pare e peça para o desenvolvedor gerá-lo; depois reorganize as pastas internas conforme 2.4.
+### 2.2 Scaffold — esqueleto manual, sem wizard
+**Decisão (2026-09-26):** o esqueleto é mantido à mão neste repositório, **sem usar o wizard**. O formato é o mesmo que o wizard 1.5.0 do SDK da FP 2608 gera para app Fiori (`generators/general-app/templates/mta-fiori.yaml.template`, `package-fiori.json.template`, `index.js.template`). **Não invente um formato diferente**: se algo do empacotamento mudar, compare com esses templates e com o exemplo oficial de 2021.
+
+Formato do pacote:
+- `mta.yaml` com **um único módulo** `type: fiori-app`, `path: .`, `builder: custom`, sem recurso `html5-apps-repo` e sem `deploy_mode`. O ID do MTA (`ext-factoreone`) e o nome do módulo (`factoreone`) derivam do nome do produto.
+- O módulo é o app já **buildado** em `<módulo>.module/`, com `manifest.json` (exige `sap.app.id` e `sap.app.applicationVersion`) e `WebClientExtension.json` (tiles) na raiz. O `compress` zipa essa pasta em `resources/<sap.app.id sem pontos>.zip` e o `mbt build` empacota `resources/` no `.mtar`.
+- O **primeiro tile de um app Fiori é a página inicial** e não leva `url`. Tiles seguintes usam `url` no formato `&/<rota>`. `linkmethod` só aceita `ExistingWindow` para Fiori.
+
+Como o build funciona aqui (o wizard só empacota um app pronto; o UI5 é buildado por nós):
+- `npm run build:module`: `ui5 build` (`@ui5/cli` 4 + `ui5-tooling-transpile`, TypeScript → `sap.ui.define`) para `factoreone.module/`, depois `scripts/generate-webclient-extension.mjs` gera o `WebClientExtension.json`. O nome do tile vem de `product.ts` e o subtítulo do i18n (`tileSubtitle`); nada de nome repetido à mão nesse arquivo.
+- `npm run compress`: `scripts/compress.mjs`, equivalente ao `index.js` do wizard, mas **falha com código diferente de zero** em qualquer erro (o do wizard só registra e segue).
+- `npm run build`: `mbt build` → `mta_archives/ext-factoreone_<versão>.mtar`. Não passar `--mtar` sem a extensão: o `mbt` 1.2.47 usa o valor exato.
+- Classes de UI5 em TypeScript precisam de `@namespace` no JSDoc (ex.: `@namespace factoreone.app.controller`), senão o transpilador nomeia a classe pelo caminho da pasta (`webapp.controller.Main`).
+- `mta.yaml`, `manifest.json` e `package.json` repetem nome e versão por serem estáticos; `test/app/packaging.test.ts` confere que continuam de acordo com `product.ts`.
+
+Comparado ao exemplo oficial de 2021 (FP 2105), **fora do formato atual**: módulo `html5` + `com.sap.application.content`, `html5-apps-repo`, `deploy_mode: b1-webclient`, `xs-app.json`, `ui5-task-zipper`, `generateManifestBundle` e `generateCachebusterInfo`. Nenhuma dessas peças é usada; o exemplo antigo serve só para comparação. Material de referência local (fora do git): `referencia/`.
+
+**Não validado:** o `.mtar` gerado ainda não foi importado no Extension Manager nem aberto no Web Client. TODO [CONFIRMAR] `minUI5Version` (hoje 1.120.0), tema, roteamento/`rootView` dentro do Web Client e se o `.mtar` no formato da FP 2608 é aceito como está.
 
 ### 2.3 Um app ou vários? [CONFIRMAR]
 Duas opções — apresentar prós e contras ao responsável antes de decidir:
@@ -67,10 +84,14 @@ Duas opções — apresentar prós e contras ao responsável antes de decidir:
       /repository    GgfRepository.ts, GgfSourceData.ts
     /ind             (vazio até a fase do módulo)
   /i18n              textos do núcleo (pt_BR padrão, en)
+  Component.ts, manifest.json, /view, /controller   Hello World do núcleo (tile único da suíte)
+/scripts             build do módulo Web Client (WebClientExtension.json, compress)
+mta.yaml, ui5.yaml   empacotamento (ver 2.2)
 /setup
   /core              metadados das tabelas da plataforma
   /ggf               udt-udf-udo.json, sql-queries/*.sql
 /test
+  /app               consistência do empacotamento com product.ts
   /core
   /ggf/engine        testes do motor + fixtures/*.json
 ```
@@ -270,3 +291,6 @@ Não avance de fase sem a anterior testada e revisada.
 | 2026-09-25 | `ServiceLayerClient` (`core/service`): sessão atrás da interface `SessionProvider`; renovação reativa (401 ou código 301) com uma nova tentativa; `$batch` com changesets; erros traduzidos. A trava de escrita por `FBO_ENV` vale só para sessão por credenciais (ferramentas/testes); a sessão SSO do Web Client não passa por ela | Escrita em produção é a operação normal do cliente; a trava protege só o uso do `.env` |
 | 2026-09-25 | Pendente de validar com o servidor: caminho base `/b1s/v2`, código de sessão expirada (301), formato exato do `$batch` aceito pelo SL, implementação de SSO do `SessionProvider` | Testes usam `fetch` simulado; nenhuma chamada real foi feita |
 | 2026-09-26 | Nome do produto: **FactoreOne** (antes "Fabrica One"). Prefixo de tabelas `FBO_` mantido até o responsável decidir se muda | Decisão do responsável |
+| 2026-09-26 | Scaffold **manual, sem wizard**, no formato do template Fiori do wizard 1.5.0 do SDK da FP 2608 (1 módulo `fiori-app`, `path: .`, `npm run compress`). O exemplo oficial de 2021 (FP 2105) fica só como comparação | Decisão do responsável; o wizard só empacota app pronto e não builda UI5 |
+| 2026-09-26 | Build do app: `@ui5/cli` 4 + `ui5-tooling-transpile` (TypeScript), sem `ui5-task-zipper`, `webide-extension`, `xs-app.json` nem `@sap/ux-ui5-tooling`. Tile (`WebClientExtension.json`) gerado por script a partir de `product.ts` + i18n. ID do MTA `ext-factoreone`, namespace UI5 `factoreone.app` | Manter o formato do resultado com ferramental atual (Node 24 + TS); nomes estáticos cobertos por teste |
+| 2026-09-26 | Hello World gerado e `.mtar` construído com `mbt build` (85 testes e typecheck ok). **Pendente:** importar no Extension Manager e abrir no Web Client; `minUI5Version`/tema `[CONFIRMAR]`; `npm audit` aponta só dependências de desenvolvimento (vitest 2, `@ui5/cli`) | Sem acesso ao ambiente B1 nesta máquina |

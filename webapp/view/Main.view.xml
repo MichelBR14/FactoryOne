@@ -1,0 +1,16 @@
+<mvc:View
+    controllerName="factoreone.app.controller.Main"
+    xmlns:mvc="sap.ui.core.mvc"
+    xmlns="sap.m"
+    displayBlock="true">
+    <Page id="page" title="{view>/title}">
+        <content>
+            <MessageStrip
+                id="hello"
+                text="{view>/message}"
+                type="Success"
+                showIcon="true"
+                class="sapUiMediumMargin" />
+        </content>
+    </Page>
+</mvc:View>

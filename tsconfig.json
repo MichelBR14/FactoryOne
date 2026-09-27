@@ -8,7 +8,7 @@
     "noImplicitOverride": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": []
+    "types": ["@openui5/types", "node"]
   },
   "include": ["webapp/**/*.ts", "test/**/*.ts"]
 }
