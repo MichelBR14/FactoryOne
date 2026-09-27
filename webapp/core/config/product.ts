@@ -14,6 +14,9 @@ export type ModuleCode = (typeof MODULES)[number];
 // TODO [CONFIRMAR] limite de tamanho do nome de UDT na FP 2608 (validar no instalador).
 export const MAX_UDT_NAME_LENGTH = 19;
 
+// TODO [CONFIRMAR] limite de tamanho do nome de UDF (sem o prefixo `U_`) na FP 2608 (validar no instalador).
+export const MAX_UDF_NAME_LENGTH = 18;
+
 /** Nome da UDT de um módulo: `FBO_GGF_RULE`. Para o núcleo, `FBO_SETUP`. */
 export function tableName(module: ModuleCode, name: string): string {
   const base = module === "core" ? name : `${module.toUpperCase()}_${name}`;

@@ -73,7 +73,8 @@ Duas opções — apresentar prós e contras ao responsável antes de decidir:
   /core
     /config          product.ts (nome, prefixo, versão), feature flags
     /service         ServiceLayerClient.ts (login, sessão, $batch, erros), SqlQueryRunner.ts
-    /data            MetadataInstaller.ts (cria UDT/UDF/UDO a partir de /setup), BaseRepository.ts
+    /data            MetadataInstaller.ts (lê o que existe, planeja e cria UDT/UDF/UDO), plan.ts, metadata.ts,
+                     SetupRepository.ts, BaseRepository.ts, /definitions (metadados de cada módulo, em TS tipado)
     /auth            Authorization.ts (autorizações por função), License.ts (módulos habilitados)
     /ui              componentes/fragmentos reutilizáveis, formatters, MessageHandler
     /util            money.ts (centavos/decimal), dates.ts (períodos), hashing.ts
@@ -88,7 +89,7 @@ Duas opções — apresentar prós e contras ao responsável antes de decidir:
 /scripts             build do módulo Web Client (WebClientExtension.json, compress)
 mta.yaml, ui5.yaml   empacotamento (ver 2.2)
 /setup
-  /core              metadados das tabelas da plataforma
+  /core              (metadados da plataforma ficam em webapp/core/data/definitions/core.ts, ver seção 9)
   /ggf               udt-udf-udo.json, sql-queries/*.sql
 /test
   /app               consistência do empacotamento com product.ts
@@ -294,3 +295,5 @@ Não avance de fase sem a anterior testada e revisada.
 | 2026-09-26 | Scaffold **manual, sem wizard**, no formato do template Fiori do wizard 1.5.0 do SDK da FP 2608 (1 módulo `fiori-app`, `path: .`, `npm run compress`). O exemplo oficial de 2021 (FP 2105) fica só como comparação | Decisão do responsável; o wizard só empacota app pronto e não builda UI5 |
 | 2026-09-26 | Build do app: `@ui5/cli` 4 + `ui5-tooling-transpile` (TypeScript), sem `ui5-task-zipper`, `webide-extension`, `xs-app.json` nem `@sap/ux-ui5-tooling`. Tile (`WebClientExtension.json`) gerado por script a partir de `product.ts` + i18n. ID do MTA `ext-factoreone`, namespace UI5 `factoreone.app` | Manter o formato do resultado com ferramental atual (Node 24 + TS); nomes estáticos cobertos por teste |
 | 2026-09-26 | Primeiro `.mtar` construído com `mbt build`; a tela inicial é a do FactoreOne (nome, versão, módulos e licença), sem conteúdo de exemplo (88 testes e typecheck ok). **Pendente:** importar no Extension Manager e abrir no Web Client; `minUI5Version`/tema `[CONFIRMAR]`; `npm audit` aponta só dependências de desenvolvimento (vitest 2, `@ui5/cli`) | Sem acesso ao ambiente B1 nesta máquina |
+| 2026-09-26 | Instalador de metadados do núcleo (Fase 0): definições declarativas em TS tipado (`webapp/core/data/definitions/`), **não** em `/setup/*.json`; planejador puro (`plan.ts`) + `MetadataInstaller` (lê, planeja, executa em POSTs sequenciais: tabelas → campos → objetos; para na primeira falha; nunca apaga nem altera; divergência de campo vira aviso). Versão instalada por módulo na `FBO_SETUP`, gravada só depois de tudo criado | O UI5 só empacota `webapp/`; JSON fora dele não iria no `.mtar`. Retomada por reexecução (o plano é recalculado do que existe) |
+| 2026-09-26 | `FBO_SETUP`, `FBO_LIC` e `FBO_LOG` modeladas como MasterData com UDO (Code = módulo em SETUP/LIC; LOG a definir). `FBO_LIC` só com `U_Enabled` (Y/N). **Não validado no servidor:** nomes de propriedades/enums de `UserTablesMD`/`UserFieldsMD`/`UserObjectsMD`, nome da entidade do UDO, HTTP 404 para tabela/objeto inexistente, formato do `nextLink`, limite de nome de UDF (18) e de campo alfa (254). Testes usam um Service Layer simulado em memória; nenhuma chamada real | Sem servidor de dev no ar; tudo isolado em `plan.ts` e `SetupRepository.ts` para ajustar sem tocar no resto |
