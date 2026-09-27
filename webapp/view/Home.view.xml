@@ -1,0 +1,23 @@
+<mvc:View
+    controllerName="factoreone.app.controller.Home"
+    xmlns:mvc="sap.ui.core.mvc"
+    xmlns="sap.m"
+    displayBlock="true">
+    <Page id="page" title="{view>/title}">
+        <content>
+            <ObjectHeader
+                id="header"
+                title="{view>/title}"
+                number="{view>/version}" />
+            <List
+                id="modules"
+                headerText="{view>/modulesHeader}"
+                items="{view>/modules}">
+                <StandardListItem
+                    title="{view>name}"
+                    info="{view>status}"
+                    infoState="{view>state}" />
+            </List>
+        </content>
+    </Page>
+</mvc:View>

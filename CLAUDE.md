@@ -84,7 +84,7 @@ Duas opções — apresentar prós e contras ao responsável antes de decidir:
       /repository    GgfRepository.ts, GgfSourceData.ts
     /ind             (vazio até a fase do módulo)
   /i18n              textos do núcleo (pt_BR padrão, en)
-  Component.ts, manifest.json, /view, /controller   Hello World do núcleo (tile único da suíte)
+  Component.ts, manifest.json, /view, /controller   tela inicial da suíte (tile único; hoje lista os módulos e o estado da licença)
 /scripts             build do módulo Web Client (WebClientExtension.json, compress)
 mta.yaml, ui5.yaml   empacotamento (ver 2.2)
 /setup
@@ -293,4 +293,4 @@ Não avance de fase sem a anterior testada e revisada.
 | 2026-09-26 | Nome do produto: **FactoreOne** (antes "Fabrica One"). Prefixo de tabelas `FBO_` mantido até o responsável decidir se muda | Decisão do responsável |
 | 2026-09-26 | Scaffold **manual, sem wizard**, no formato do template Fiori do wizard 1.5.0 do SDK da FP 2608 (1 módulo `fiori-app`, `path: .`, `npm run compress`). O exemplo oficial de 2021 (FP 2105) fica só como comparação | Decisão do responsável; o wizard só empacota app pronto e não builda UI5 |
 | 2026-09-26 | Build do app: `@ui5/cli` 4 + `ui5-tooling-transpile` (TypeScript), sem `ui5-task-zipper`, `webide-extension`, `xs-app.json` nem `@sap/ux-ui5-tooling`. Tile (`WebClientExtension.json`) gerado por script a partir de `product.ts` + i18n. ID do MTA `ext-factoreone`, namespace UI5 `factoreone.app` | Manter o formato do resultado com ferramental atual (Node 24 + TS); nomes estáticos cobertos por teste |
-| 2026-09-26 | Hello World gerado e `.mtar` construído com `mbt build` (85 testes e typecheck ok). **Pendente:** importar no Extension Manager e abrir no Web Client; `minUI5Version`/tema `[CONFIRMAR]`; `npm audit` aponta só dependências de desenvolvimento (vitest 2, `@ui5/cli`) | Sem acesso ao ambiente B1 nesta máquina |
+| 2026-09-26 | Primeiro `.mtar` construído com `mbt build`; a tela inicial é a do FactoreOne (nome, versão, módulos e licença), sem conteúdo de exemplo (88 testes e typecheck ok). **Pendente:** importar no Extension Manager e abrir no Web Client; `minUI5Version`/tema `[CONFIRMAR]`; `npm audit` aponta só dependências de desenvolvimento (vitest 2, `@ui5/cli`) | Sem acesso ao ambiente B1 nesta máquina |
