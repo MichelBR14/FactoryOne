@@ -27,7 +27,10 @@ export function createFakeServiceLayer(options: Options = {}) {
   const tables = new Map<string, Record<string, unknown>>();
   const fields: Array<Record<string, unknown>> = [];
   const objects = new Map<string, Record<string, unknown>>();
-  const setup = new Map<string, Record<string, unknown>>();
+  const entities = new Map<string, Map<string, Record<string, unknown>>>();
+  const rowsOf = (entity: string) => entities.get(entity) ?? entities.set(entity, new Map()).get(entity)!;
+  const setup = rowsOf("FBO_SETUP");
+  const log = rowsOf("FBO_LOG");
   const calls: Call[] = [];
 
   const ok = (body: unknown, status = 200): FakeReply => ({ status, body: body as object });
@@ -71,14 +74,17 @@ export function createFakeServiceLayer(options: Options = {}) {
       objects.set(String(body?.Code), body ?? {});
       return ok(body, 201);
     }
-    if (path.startsWith("FBO_SETUP")) {
-      if (method === "GET") return key && setup.has(key) ? ok(setup.get(key)) : NOT_FOUND();
+    const entity = /^(FBO_[A-Z0-9_]+)(\(|$)/.exec(path)?.[1];
+    if (entity) {
+      const rows = rowsOf(entity);
+      if (method === "GET") return key && rows.has(key) ? ok(rows.get(key)) : NOT_FOUND();
       if (method === "POST") {
-        setup.set(String(body?.Code), body ?? {});
+        rows.set(String(body?.Code), body ?? {});
         return ok(body, 201);
       }
       if (method === "PATCH" && key) {
-        setup.set(key, { ...setup.get(key), ...body });
+        if (!rows.has(key)) return NOT_FOUND();
+        rows.set(key, { ...rows.get(key), ...body });
         return { status: 204 };
       }
     }
@@ -113,6 +119,7 @@ export function createFakeServiceLayer(options: Options = {}) {
     fields,
     objects,
     setup,
+    log,
     posts: () => calls.filter((c) => c.method !== "GET")
   };
 }
