@@ -30,7 +30,8 @@ export default class AbsorptionV2 extends Controller {
       ggfGroupShares: JSON.stringify(savedDistribution.GGF?.groupShares ?? [], null, 2),
       busy: false, hasResult: false, report: null, entries: [], resources: [],
       summary: [], completeness: [], evidence: "", distribution: null, distributionCategories: [],
-      distributionOrders: [], distributionBases: [], distributionWarnings: []
+      distributionOrders: [], distributionBases: [], distributionWarnings: [],
+      stockConsumptionOrders: [], fifoScenario: null
     }), "v2");
   }
 
@@ -153,6 +154,43 @@ export default class AbsorptionV2 extends Controller {
           amount: formatMoney(base.amountCents as string), refs: ((base.sourceRefs as string[]) ?? []).join(", ")
         }))));
       model.setProperty("/distributionWarnings", body.distribution.categories.filter((row: Record<string, unknown>) => row.blocker).map((row: Record<string, unknown>) => `${row.category}: ${row.blocker}`).map((text: string) => ({ text })));
+      const stockConsumption = body.stockConsumption;
+      const statusText: Record<string, string> = {
+        BLOCKED_STOCK_NEGATIVE: "Estoque negativo",
+        BLOCKED_AMBIGUOUS_TRACE: "Rastreio ambíguo",
+        STOCK_REVALUATION_CANDIDATE: "Candidato a reavaliação de estoque",
+        CPV_ADJUSTMENT_CANDIDATE: "Candidato a ajuste de CPV",
+        CONSUMPTION_UNCLASSIFIED: "Consumo sem classificação contábil",
+        BLOCKED_METHOD_NOT_HOMOLOGATED: "Método não homologado"
+      };
+      model.setProperty("/stockConsumptionOrders", (stockConsumption?.orders ?? []).map((row: Record<string, unknown>) => ({
+        ...row,
+        statusText: statusText[String(row.status)] ?? String(row.status ?? "Sem evidência"),
+        producedText: row.producedQuantity == null ? "Não comprovada" : `${row.producedQuantity} ${row.unit ?? ""}`.trim(),
+        modAdjustment: row.modAdjustmentCents == null ? "Não disponível" : formatMoney(String(row.modAdjustmentCents)),
+        ggfAdjustment: row.ggfAdjustmentCents == null ? "Não disponível" : formatMoney(String(row.ggfAdjustmentCents)),
+        modStock: "Bloqueado", modConsumed: "Bloqueado", ggfStock: "Bloqueado", ggfConsumed: "Bloqueado",
+        stock: row.quantityOnStock == null ? "Não disponível" : String(row.quantityOnStock),
+        warehouseText: ((row.warehouses as Array<Record<string, unknown>>) ?? []).map((warehouse) =>
+          `${warehouse.code}: ${warehouse.quantity} ${row.unit ?? ""} (disponível ${warehouse.available ?? "não comprovada"})`).join(" · ") || "Depósito não comprovado",
+        valuationMethodText: String(row.valuationMethod ?? "Não disponível")
+      })));
+      const fifo = stockConsumption?.fifoScenario;
+      model.setProperty("/fifoScenario", fifo ? {
+        ...fifo,
+        producedText: fifo.produced ? `${fifo.produced} ${fifo.unit}` : "Não disponível",
+        consumedText: fifo.consumed ? `${fifo.consumed} ${fifo.unit}` : "Não disponível",
+        remainingText: fifo.remaining ? `${fifo.remaining} ${fifo.unit}` : "Não disponível",
+        stockAmount: fifo.calculation?.totalStockCents == null ? "Não disponível" : formatMoney(fifo.calculation.totalStockCents),
+        consumedAmount: fifo.calculation?.totalConsumedCents == null ? "Não disponível" : formatMoney(fifo.calculation.totalConsumedCents),
+        methodText: fifo.item ? `${fifo.item} · FIFO` : "FIFO não comprovado",
+        receiptText: fifo.receipt ? `InventoryGenEntries(${fifo.receipt.docEntry}) linha ${fifo.receipt.line} · ${fifo.receipt.date} · ${fifo.receipt.quantity} ${fifo.unit}` : "Recebimento não comprovado",
+        outflowText: fifo.issues?.map((issue: Record<string, unknown>) => `InventoryGenExits(${issue.docEntry}) linha ${issue.line ?? 0} · ${issue.date} · ${issue.quantity} ${fifo.unit}`).join("; ") ?? "Saídas não reconciliadas",
+        layerText: fifo.layer ? `${fifo.layer.label} · sequência ${fifo.layer.sequence} / camada ${fifo.layer.id} · aberto ${fifo.layer.openQty} · custo corrente ${fifo.layer.cost}` : "Camada não comprovada",
+        splitStatusText: statusText[fifo.calculation?.status] ?? String(fifo.status ?? "Rastreio não comprovado"),
+        consumedStatusText: statusText[fifo.calculation?.consumedStatus] ?? "Consumo sem classificação contábil",
+        splitReason: fifo.calculation?.reason ?? fifo.reason ?? "Sem evidência suficiente."
+      } : null);
       model.setProperty("/distributionTotals", {
         difference: formatMoney(total.totalDifferenceCents), allocated: formatMoney(total.totalAllocatedCents), residual: formatMoney(total.residualCents)
       });

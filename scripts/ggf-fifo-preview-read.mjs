@@ -6,7 +6,7 @@ async function read(session,path,label) {
 }
 
 /** Dedicated technical scenario; never merged into a functional GGF allocation. */
-export async function readTechnicalFifoPreview(session,previewFifoProduction) {
+export async function readTechnicalFifoPreview(session,previewFifoProduction,splitStockAndConsumed) {
   const [order,receipt,issue,item,fifo]=await Promise.all([
     read(session,"ProductionOrders(214)","technical OP"),
     read(session,"InventoryGenEntries(122)","production receipt"),
@@ -37,17 +37,24 @@ export async function readTechnicalFifoPreview(session,previewFifoProduction) {
     layers:[{transactionSequenceNum:source.TransactionSequenceNum,layerId:source.LayerID,
       docNumber:String(source.DocNumber),docType:source.DocType,item:"F1GGF26P01",warehouse:"01",
       openQuantity:String(source.OpenQty),currentCost:String(source.CurrentCost)}]});
+  const split=splitStockAndConsumed({valuationMethod:item.CostAccountingMethod,proof:"FIFO_LAYER_RECONCILED",
+    producedQuantity:preview.producedQuantity,consumedQuantity:preview.consumedQuantity,
+    remainingQuantity:preview.openQuantity,unit:item.InventoryUOM,warehouse:"01",negativeStock:false,
+    modAdjustmentCents:"0",ggfAdjustmentCents:"10000"});
   ensure(preview.status==="FIFO_PARTIALLY_CONSUMED"&&preview.inventoryGgfMinor==="4000"&&
-    preview.consumedGgfMinor==="6000"&&preview.payload===null,"Technical FIFO preview changed");
+    preview.consumedGgfMinor==="6000"&&preview.payload===null&&
+    split.status==="STOCK_REVALUATION_CANDIDATE"&&split.totalStockCents==="4000"&&
+    split.totalConsumedCents==="6000"&&split.payload===null,"Technical FIFO preview changed");
   return {origin:"sap",technicalOnly:true,scenario:"F1FOP2609291",capturedAt:new Date().toISOString(),
     order:"83",item:item.ItemCode,itemName:item.ItemName,warehouse:"01",unit:"UN",
     produced:preview.producedQuantity,originalLayerQuantity:"10",consumed:preview.consumedQuantity,
     remaining:preview.openQuantity,status:preview.status,receipt:{docEntry:122,docNum:77,line:0,
       date:receipt.DocDate,quantity:receiptLine.InventoryQuantity},
-    layer:{label:"Camada do recebimento 77",openQty:source.OpenQty,cost:source.CurrentCost},
-    issues:[{docEntry:90,docNum:40,line:0,date:issue.DocDate,quantity:issueLine.InventoryQuantity}],
+    layer:{label:"Camada do recebimento 77",sequence:source.TransactionSequenceNum,id:source.LayerID,
+      openQty:source.OpenQty,cost:source.CurrentCost},
+    issues:[{docEntry:90,docNum:40,line:issueLine.LineNum,date:issue.DocDate,quantity:issueLine.InventoryQuantity}],
     example:{label:"Exemplo técnico, não é GGF funcional",ggfTotalMinor:"10000",
       ggfUnitMinor:preview.ggFUnitMinor,stockMinor:preview.inventoryGgfMinor,
       consumedMinor:preview.consumedGgfMinor,stockStatus:preview.stockDisposition,
-      consumedStatus:preview.consumedDisposition},payload:null};
+      consumedStatus:preview.consumedDisposition},calculation:split,payload:null};
 }

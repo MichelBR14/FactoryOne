@@ -27,6 +27,17 @@ const response = {
       { category: "GGF", criterion: "DIRECT_COST", status: "CALCULATED_TECHNICAL", differenceCents: "-616600", allocatedCents: "-616600", residualCents: "0", blocker: "" }
     ],
     orders: [{ orderNumber: "76", item: "C00003", itemDescription: "Produto", producedQuantity: "1", quantityUnit: "UN", standardModCents: "300000", standardGgfCents: "150000", modAdjustmentCents: "0", ggfAdjustmentCents: "-616600", totalAdjustmentCents: "-616600", originalCostCents: "550058", costAfterAbsorptionCents: "-66542", bases: [{ category: "GGF", criterion: "DIRECT_COST", group: "", base: "550058", totalBase: "571823", basisUnit: "SAP_LOCAL", basisDecimals: 2, participationPercent: "96.19", amountCents: "-616600", roundingMinor: "0", sourceRefs: ["203", "77/0"] }], directCostComponents: [] }]
+  },
+  stockConsumption: {
+    orders: [{ orderNumber: "76", item: "C00003", valuationMethod: "bis_MovingAverage", unit: "UN", quantityOnStock: 0,
+      warehouses: [{ code: "01", quantity: 0, available: 0 }], status: "BLOCKED_AMBIGUOUS_TRACE",
+      reason: "Saldo atual agregado; saídas posteriores não reconciliadas." }],
+    fifoScenario: { origin: "sap", technicalOnly: true, status: "FIFO_PARTIALLY_CONSUMED", order: "83", item: "F1GGF26P01", unit: "UN",
+      produced: "10.000000", consumed: "6.000000", remaining: "4.000000",
+      receipt: { docEntry: 122, docNum: 77, line: 0, date: "2026-09-29", quantity: 10 },
+      issues: [{ docEntry: 90, docNum: 40, line: 0, date: "2026-09-29", quantity: 6 }],
+      calculation: { status: "STOCK_REVALUATION_CANDIDATE", totalStockCents: "4000", totalConsumedCents: "6000", reason: "Rastreio FIFO reconciliado; CPV pendente de regra." },
+      payload: null }
   }
 };
 
@@ -51,6 +62,13 @@ for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${widt
   await expect(page.getByText("Homologação técnica", { exact: true })).toBeVisible();
   await expect(page.getByText("R$ -4.666,00").or(page.getByText("-R$ 4.666,00"))).toBeVisible();
   await expect(page.getByText("Conta técnica")).toBeVisible();
+  await expect(page.getByText("5. Estoque x Consumido")).toBeVisible();
+  await expect(page.getByText("Rastreio ambíguo")).toBeVisible();
+  await expect(page.getByText("Cenário FIFO técnico independente · OP 83")).toBeVisible();
+  await page.getByText("Cenário FIFO técnico independente · OP 83").click();
+  await expect(page.getByText("R$ 40,00")).toBeVisible();
+  await expect(page.getByText("R$ 60,00")).toBeVisible();
+  await expect(page.getByText("Consumo sem classificação contábil")).toBeVisible();
   await expect(page.getByText("Tarifa atual sem histórico mensal comprovado.").first()).toBeVisible();
   await expect(page.locator("body")).not.toContainText("Dados fictícios locais");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

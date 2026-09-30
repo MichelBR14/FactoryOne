@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { readTechnicalFifoPreview } from "../../scripts/ggf-fifo-preview-read.mjs";
 import { previewFifoProduction } from "../../webapp/modules/ggf/service/FifoProductionTrace";
+import { splitStockAndConsumed } from "../../webapp/modules/ggf/service/StockConsumptionSplit";
 
 function fixture(issueQty=6) {
   const data:Record<string,unknown>={
@@ -23,14 +24,16 @@ function fixture(issueQty=6) {
 describe("SAP technical FIFO preview read",()=>{
   it("publishes a separate technical-only trace after all live reads reconcile",async()=>{
     const session=fixture();
-    const result=await readTechnicalFifoPreview(session,previewFifoProduction);
+    const result=await readTechnicalFifoPreview(session,previewFifoProduction,splitStockAndConsumed);
     expect(result).toMatchObject({origin:"sap",technicalOnly:true,order:"83",item:"F1GGF26P01",
       produced:"10.000000",consumed:"6.000000",remaining:"4.000000",status:"FIFO_PARTIALLY_CONSUMED",
       example:{stockMinor:"4000",consumedMinor:"6000",
-        consumedStatus:"FIFO_CONSUMED_GGF_PENDING_ACCOUNTING_RULE"},payload:null});
+        consumedStatus:"FIFO_CONSUMED_GGF_PENDING_ACCOUNTING_RULE"},
+      calculation:{status:"STOCK_REVALUATION_CANDIDATE",totalStockCents:"4000",
+        totalConsumedCents:"6000",payload:null}});
     expect(session.readFifoLayers).toHaveBeenCalledWith("F1GGF26P01","01");
   });
   it("refuses a changed issue instead of presenting stale quantities",async()=>{
-    await expect(readTechnicalFifoPreview(fixture(5),previewFifoProduction)).rejects.toThrow("changed");
+    await expect(readTechnicalFifoPreview(fixture(5),previewFifoProduction,splitStockAndConsumed)).rejects.toThrow("changed");
   });
 });
