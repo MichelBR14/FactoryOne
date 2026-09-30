@@ -14,3 +14,14 @@ mta-op*
 Makefile*.mta
 .*_mta_build_tmp/
 webapp.zip
+
+node_modules/
+dist/
+.scp/
+.env
+Makefile*.mta
+mta_archives
+mta-*
+resources
+archive.zip
+.*_mta_build_tmp

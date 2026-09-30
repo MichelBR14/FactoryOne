@@ -1,14 +1,35 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "target": "es2022",
+    "module": "es2022",
+    "moduleResolution": "node",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["@openui5/types", "node"]
+    "types": [
+      "@openui5/types",
+      "node"
+    ],
+    "allowJs": true,
+    "strictPropertyInitialization": false,
+    "rootDir": "./",
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "paths": {
+      "factoreone/app/*": [
+        "./webapp/*"
+      ]
+    },
+    "typeRoots": [
+      "./node_modules/@types",
+      "./node_modules"
+    ]
   },
-  "include": ["webapp/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "webapp/**/*.ts",
+    "test/**/*.ts",
+    "./webapp/**/*"
+  ]
 }
