@@ -134,6 +134,42 @@
           <Text text="{v2>/evidence}" wrapping="true" class="sapUiSmallMarginTop" />
           <List items="{v2>/blockers}"><StandardListItem title="{v2>text}" icon="sap-icon://message-warning"/></List>
         </VBox>
+        <Title text="7. Plano de Contabilização" level="H2" titleStyle="H4" class="sapUiLargeMarginTop" />
+        <MessageStrip text="O plano técnico é append-only neste navegador, com hash e releitura local. Ele não foi persistido no SAP: a SBODEMOBR2 permanece somente leitura. Nenhum claim ou documento financeiro é criado." type="Warning" showIcon="true" />
+        <MessageStrip text="{v2>/postingPlanError}" type="Error" showIcon="true" visible="{= !!${v2>/postingPlanError} }" />
+        <VBox visible="{= !!${v2>/postingPlan} }" class="sapUiSmallMarginTop">
+          <HBox wrap="Wrap" class="sapUiTinyMarginBottom">
+            <ObjectStatus title="Status" text="{v2>/postingPlan/statusText}" state="{= ${v2>/postingPlan/status} === 'BLOCKED' ? 'Error' : 'Success' }" class="sapUiSmallMarginEnd" />
+            <ObjectStatus title="ClosingId técnico" text="{v2>/postingPlan/closingId}" class="sapUiSmallMarginEnd" />
+            <ObjectStatus title="Versão" text="{v2>/postingPlan/version}" class="sapUiSmallMarginEnd" />
+            <ObjectStatus title="Moeda local SAP" text="{v2>/postingPlan/currency}" class="sapUiSmallMarginEnd" />
+          </HBox>
+          <Text text="PostingHash: {v2>/postingPlan/postingHash}" wrapping="true" class="sapUiTinyMarginBottom" />
+          <HBox wrap="Wrap" class="sapUiTinyMarginBottom">
+            <ObjectStatus title="MOD" text="{v2>/postingPlan/totalModText}" class="sapUiSmallMarginEnd" />
+            <ObjectStatus title="GGF" text="{v2>/postingPlan/totalGgfText}" class="sapUiSmallMarginEnd" />
+            <ObjectStatus title="Estoque" text="{v2>/postingPlan/totalStockText}" class="sapUiSmallMarginEnd" />
+            <ObjectStatus title="CPV" text="{v2>/postingPlan/totalCpvText}" class="sapUiSmallMarginEnd" />
+            <ObjectStatus title="Bloqueado" text="{v2>/postingPlan/totalBlockedText}" state="{= ${v2>/postingPlan/totalBlocked} !== '0' ? 'Error' : 'None' }" class="sapUiSmallMarginEnd" />
+            <ObjectStatus title="Diferença" text="{v2>/postingPlan/totalDifferenceText}" state="{= ${v2>/postingPlan/totalDifference} === '0' ? 'Success' : 'Error' }" />
+          </HBox>
+          <Title text="Documentos previstos" level="H3" titleStyle="H5" />
+          <List items="{v2>/postingPlan/documents}" showSeparators="Inner">
+            <StandardListItem title="Ordem {v2>order} · {v2>type}" description="{v2>totalText} {v2>currency} · {v2>lineCount} linha(s) · dependências: {v2>dependencies}" info="{v2>status}" infoState="{= ${v2>status} === 'BLOCKED' ? 'Error' : 'None' }" />
+          </List>
+          <List items="{v2>/postingPlan/blockers}" visible="{= ${v2>/postingPlan/blockers}.length > 0 }" class="sapUiTinyMarginTop">
+            <StandardListItem title="{v2>}" icon="sap-icon://message-error" />
+          </List>
+          <Title text="Linhas de auditoria e documentos futuros" level="H3" titleStyle="H5" class="sapUiSmallMarginTop" />
+          <Table items="{v2>/postingPlan/lines}" growing="true" growingScrollToLoad="true">
+            <columns><Column><Text text="OP / item / categoria" /></Column><Column><Text text="Conta origem / critério" /></Column><Column hAlign="End"><Text text="Valor · estoque · consumido" /></Column><Column><Text text="Método / dimensões" /></Column><Column><Text text="Documento futuro / status" /></Column><Column><Text text="Bloqueios" /></Column></columns>
+            <items><ColumnListItem><cells><ObjectIdentifier title="OP {v2>orderNumber} · {v2>item} · {v2>category}" text="{v2>quantity} {v2>unit}"/><Text text="{v2>accountOriginal} · {v2>criterion}"/><Text text="{v2>amountText} · {v2>stockText} · {v2>consumedText}"/><Text text="{v2>valuationMethod} · {v2>dimensions}" wrapping="true"/><Text text="{v2>futureDocumentTypesText} · {v2>status}" wrapping="true"/><Text text="{v2>blockersText}" wrapping="true"/></cells></ColumnListItem></items>
+          </Table>
+          <Title text="Versões locais preservadas" level="H3" titleStyle="H5" class="sapUiSmallMarginTop" />
+          <List items="{v2>/postingPlanHistory}" showSeparators="Inner">
+            <StandardListItem title="Versão {v2>version} · {v2>status}" description="{v2>createdAt} · SHA-256 {v2>hashPrefix}…" />
+          </List>
+        </VBox>
       </VBox>
     </content>
   </Page>

@@ -29,6 +29,7 @@ const response = {
     orders: [{ orderNumber: "76", item: "C00003", itemDescription: "Produto", producedQuantity: "1", quantityUnit: "UN", standardModCents: "300000", standardGgfCents: "150000", modAdjustmentCents: "0", ggfAdjustmentCents: "-616600", totalAdjustmentCents: "-616600", originalCostCents: "550058", costAfterAbsorptionCents: "-66542", bases: [{ category: "GGF", criterion: "DIRECT_COST", group: "", base: "550058", totalBase: "571823", basisUnit: "SAP_LOCAL", basisDecimals: 2, participationPercent: "96.19", amountCents: "-616600", roundingMinor: "0", sourceRefs: ["203", "77/0"] }], directCostComponents: [] }]
   },
   stockConsumption: {
+    currency: "R$", currencySource: "CompanyService_GetAdminInfo.LocalCurrency",
     orders: [{ orderNumber: "76", item: "C00003", producedQuantity: "1", ggfAdjustmentCents: "-616600", modAdjustmentCents: "0",
       valuationMethod: "bis_MovingAverage", unit: "UN", quantityOnStock: 0,
       accountingDetermination: { origin: "SAP_ADVANCED_GL_ACCOUNT_DETERMINATION", inventoryAccount: null, verified: false, refs: ["Items.GLMethod", "Warehouses.StockAccount"] },
@@ -73,6 +74,10 @@ for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${widt
   await expect(page.getByText("R$ 60,00")).toBeVisible();
   await expect(page.getByText("Consumo sem classificação contábil")).toBeVisible();
   await expect(page.getByText("6. Prévia Contábil")).toBeVisible();
+  await expect(page.getByText("7. Plano de Contabilização")).toBeVisible();
+  await expect(page.getByText("Bloqueado", { exact: true }).last()).toBeVisible();
+  await expect(page.getByText("Ordem 2 · JournalEntry.CPV", { exact: true })).toBeVisible();
+  await expect(page.getByText("Nenhum claim ou documento financeiro é criado.")).toBeVisible();
   await expect(page.getByText("Prévia técnica somente leitura. Não cria MaterialRevaluation nem Journal Entry.")).toBeVisible();
   await page.getByText("A. Estoque · MaterialRevaluation").click();
   await expect(page.getByText("Payload", { exact: true }).first()).toBeVisible();
@@ -82,6 +87,10 @@ for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${widt
   await expect(page.getByText("Tarifa atual sem histórico mensal comprovado.").first()).toBeVisible();
   await expect(page.locator("body")).not.toContainText("Dados fictícios locais");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.reload();
+  await expect(page.getByText("7. Plano de Contabilização")).toBeVisible();
+  await expect(page.getByText(/PostingHash: [a-f0-9]{64}/)).toBeVisible();
+  await expect(page.getByText("Bloqueado", { exact: true }).last()).toBeVisible();
   await page.getByRole("button", { name: "Voltar ao menu GGF" }).last().click();
   await expect(page).toHaveURL(/#\/ggf$/);
   expect(errors).toEqual([]);

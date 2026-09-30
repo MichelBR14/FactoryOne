@@ -163,7 +163,9 @@ async function readStockConsumptionReview(session, distribution) {
     fifoScenario = { origin: "sap", technicalOnly: true, status: "BLOCKED_AMBIGUOUS_TRACE",
       reason: "Cenário FIFO técnico não pôde ser reconciliado nesta leitura; nenhum valor anterior foi reutilizado.", payload: null };
   }
-  return { orders: reviews, fifoScenario, outflowCoverage: "INCOMPLETE_FOR_GENERAL_OPS" };
+  return { orders: reviews, fifoScenario, outflowCoverage: "INCOMPLETE_FOR_GENERAL_OPS",
+    currency: admin?.LocalCurrency ?? null,
+    currencySource: admin?.LocalCurrency ? "CompanyService_GetAdminInfo.LocalCurrency" : null };
 }
 
 export async function readClosingIntegrity(closingId) {

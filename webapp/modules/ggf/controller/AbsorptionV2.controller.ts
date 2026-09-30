@@ -6,6 +6,7 @@ import ResourceModel from "sap/ui/model/resource/ResourceModel";
 import TextArea from "sap/m/TextArea";
 import { isSapReadMode } from "../../../core/config/runtime";
 import { buildAccountingPreview, type AccountingPreviewConfig, type AccountingPreviewLineInput } from "../service/AccountingPreview";
+import { buildGgfPostingPlanDraft, LocalGgfPostingPlanRepository, technicalPostingPlanId } from "../service/GgfPostingPlan";
 import type Event from "sap/ui/base/Event";
 
 const CONFIG_KEY = "factoryone.ggf.v2.absorption.mapping";
@@ -38,9 +39,27 @@ export default class AbsorptionV2 extends Controller {
       accountingConfig,
       busy: false, hasResult: false, report: null, entries: [], resources: [],
       summary: [], completeness: [], evidence: "", distribution: null, distributionCategories: [],
-      distributionOrders: [], distributionBases: [], distributionWarnings: [],
+      distributionOrders: [], distributionBases: [], distributionWarnings: [], postingPlan: null,
+      postingPlanHistory: [], postingPlanError: null,
       stockConsumptionOrders: [], fifoScenario: null, accountingPreview: null, technicalAccountingPreview: null
     }), "v2");
+    void this.loadPersistedPostingPlan();
+  }
+
+  private async loadPersistedPostingPlan(): Promise<void> {
+    const model = this.getView()!.getModel("v2") as JSONModel;
+    try {
+      const plans = await new LocalGgfPostingPlanRepository(window.localStorage).list();
+      const latest = plans.at(-1);
+      if (!latest) return;
+      const formatMoney = (cents: string) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(cents) / 100);
+      model.setProperty("/postingPlan", this.formatPostingPlan(latest, formatMoney));
+      model.setProperty("/postingPlanHistory", plans.filter(plan => plan.closingId === latest.closingId).map(plan => ({
+        version: plan.version, status: plan.status, hashPrefix: plan.postingHash.slice(0, 16), createdAt: plan.createdAt
+      })));
+    } catch {
+      model.setProperty("/postingPlanError", "O plano local não pôde ser verificado. Nenhuma operação foi enviada ao SAP.");
+    }
   }
 
   public onMappingChange(event: Event): void {
@@ -87,6 +106,9 @@ export default class AbsorptionV2 extends Controller {
     }
     model.setProperty("/busy", true);
     model.setProperty("/hasResult", false);
+    model.setProperty("/postingPlan", null);
+    model.setProperty("/postingPlanHistory", []);
+    model.setProperty("/postingPlanError", null);
     try {
       const dimensions = model.getProperty("/dimensions") as string[];
       const params = new URLSearchParams({ start, end, branch: (model.getProperty("/branch") as string) ?? "", mapping: JSON.stringify(mapping) });
@@ -224,6 +246,24 @@ export default class AbsorptionV2 extends Controller {
       const accounting = buildAccountingPreview({ MOD: categoryTotals.MOD ?? "0", GGF: categoryTotals.GGF ?? "0" }, accountingLines, accountingConfig);
       const formattedAccounting = this.formatAccountingPreview(accounting, formatMoney);
       model.setProperty("/accountingPreview", formattedAccounting);
+      try {
+        const source = body.source as { company: string; capturedAt: string; filter: { start: string; end: string; branch: string; dimensions: string[] } };
+        const stock = body.stockConsumption as { currency?: string | null; currencySource?: string | null };
+        const plans = new LocalGgfPostingPlanRepository(window.localStorage);
+        const draft = buildGgfPostingPlanDraft(accounting, {
+          closingId: technicalPostingPlanId(source.company, source.filter.start), companyDB: source.company,
+          periodStart: source.filter.start, periodEnd: source.filter.end, branch: source.filter.branch,
+          dimensions: source.filter.dimensions, currency: stock.currency ?? null,
+          currencySource: stock.currencySource ?? null, sourceCapturedAt: source.capturedAt
+        });
+        const savedPlan = await plans.append(draft);
+        model.setProperty("/postingPlan", this.formatPostingPlan(savedPlan, formatMoney));
+        model.setProperty("/postingPlanHistory", (await plans.list(savedPlan.closingId)).map(plan => ({
+          version: plan.version, status: plan.status, hashPrefix: plan.postingHash.slice(0, 16), createdAt: plan.createdAt
+        })));
+      } catch {
+        model.setProperty("/postingPlanError", "O plano técnico não pôde ser persistido e relido neste navegador. Nenhum documento foi enviado ao SAP.");
+      }
       const fifo = stockConsumption?.fifoScenario;
       if (fifo?.calculation?.totalStockCents != null && fifo?.calculation?.totalConsumedCents != null) {
         const technicalTotal = String(fifo.example?.ggfTotalMinor ?? "0");
@@ -287,6 +327,28 @@ export default class AbsorptionV2 extends Controller {
       documents: preview.documents.map(doc => ({ ...doc, statusText: doc.status === "PREVIEW_ONLY" ? "Prévia sem payload" : "Bloqueado",
         debits: formatMoney(doc.debitsCents), credits: formatMoney(doc.creditsCents),
         lines: doc.lines.map(row => ({ ...row, amount: formatMoney(row.amountCents) })) }))
+    };
+  }
+
+  private formatPostingPlan(plan: Awaited<ReturnType<LocalGgfPostingPlanRepository["append"]>>, formatMoney: (value: string) => string) {
+    return { ...plan,
+      totalModText: formatMoney(plan.totalMod), totalGgfText: formatMoney(plan.totalGgf),
+      totalStockText: formatMoney(plan.totalStock), totalCpvText: formatMoney(plan.totalCpv),
+      totalBlockedText: formatMoney(plan.totalBlocked), totalDifferenceText: formatMoney(plan.totalDifference),
+      statusText: ({ DRAFT: "Rascunho", VALIDATED: "Validado", READY_TO_POST: "Pronto para contabilizar", BLOCKED: "Bloqueado" } as Record<string, string>)[plan.status],
+      documents: plan.documents.map(document => ({ ...document, totalText: formatMoney(document.totalCents),
+        lineCount: document.lines.length,
+        lines: document.lines.map(line => ({ ...line, amountText: formatMoney(line.amountCents),
+          dimensionsText: line.dimensions.join(" / ") || "Sem dimensões", sourceOrderRefsText: line.sourceOrderRefs.join(", ") || "Sem OP vinculada" })) })),
+      documentLines: plan.documents.flatMap(document => document.lines.map(line => ({ ...line,
+        documentType: document.type, amountText: formatMoney(line.amountCents),
+        dimensionsText: line.dimensions.join(" / ") || "Sem dimensões",
+        sourceOrderRefsText: line.sourceOrderRefs.join(", ") || "Sem OP vinculada" }))),
+      lines: plan.lines.map(line => ({ ...line, amountText: formatMoney(line.amountCents),
+        stockText: line.stockCents == null ? "Base indisponível" : formatMoney(line.stockCents),
+        consumedText: line.consumedCents == null ? "Base indisponível" : formatMoney(line.consumedCents),
+        blockersText: line.blockers.join(" · ") || "Sem bloqueios",
+        futureDocumentTypesText: line.futureDocumentTypes.join(" · ") || "Destino não comprovado" }))
     };
   }
 
