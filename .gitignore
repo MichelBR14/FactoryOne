@@ -5,6 +5,7 @@ resources/
 .env
 .env.*
 !.env.example
+.local/
 
 referencia/
 mta_archives/
@@ -12,3 +13,4 @@ mta-op*
 *.module/
 Makefile*.mta
 .*_mta_build_tmp/
+webapp.zip

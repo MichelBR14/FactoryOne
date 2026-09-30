@@ -1,0 +1,101 @@
+<core:FragmentDefinition xmlns:core="sap.ui.core" xmlns="sap.m">
+  <VBox
+    class="ggfConfiguration"
+    visible="{= ${ggf>/ready} &amp;&amp; ${ggf>/workspace} === 'classifications' }"
+  >
+    <HBox class="ggfMasterDetail">
+      <VBox class="ggfMaster" visible="{= !${ggf>/narrow} || !${ggf>/detailOpen} }">
+        <OverflowToolbar design="Transparent">
+          <Title
+            id="classificationListTitle"
+            text="{ggfText>classifications}"
+            level="H2"
+            titleStyle="H5"
+          />
+          <ToolbarSpacer />
+          <Button
+            icon="sap-icon://add"
+            tooltip="{ggfText>addClassification}"
+            press=".onAddClassification"
+          />
+        </OverflowToolbar>
+        <SearchField
+          width="100%"
+          value="{ggf>/classificationsSearch}"
+          placeholder="{ggfText>searchClassifications}"
+          liveChange=".onClassificationSearch"
+          class="sapUiSmallMarginTop sapUiSmallMarginBottom"
+        />
+        <List
+          id="classifications"
+          items="{ggf>/config/classifications}"
+          mode="SingleSelectMaster"
+          includeItemInSelection="true"
+          selectionChange=".onRecordSelect"
+          itemPress=".onRecordSelect"
+          noDataText="{ggfText>noRecords}"
+          ariaLabelledBy="classificationListTitle"
+        >
+          <CustomListItem type="Active">
+            <VBox class="ggfRecord">
+              <Title
+                text="{= ${ggf>name} || ${ggfText>newClassification} }"
+                level="H3"
+                titleStyle="H6"
+                wrapping="true"
+              />
+              <ObjectStatus text="{ggf>id}" class="sapUiTinyMarginTop" />
+            </VBox>
+          </CustomListItem>
+        </List>
+      </VBox>
+      <VBox
+        id="classificationsDetail"
+        class="ggfDetail"
+        visible="{= ${ggf>/classificationsSelected} &amp;&amp; (!${ggf>/narrow} || ${ggf>/detailOpen}) }"
+      >
+        <OverflowToolbar design="Transparent">
+          <Button
+            icon="sap-icon://nav-back"
+            tooltip="{ggfText>backClassifications}"
+            visible="{ggf>/narrow}"
+            press=".onRecordList"
+          />
+          <Title text="{ggfText>classificationDetails}" level="H2" titleStyle="H5" />
+          <ToolbarSpacer />
+          <Button
+            icon="sap-icon://delete"
+            tooltip="{ggfText>removeClassification}"
+            press=".onRemove"
+          />
+        </OverflowToolbar>
+        <VBox class="ggfDetailFields">
+          <VBox>
+            <Label text="{ggfText>code}" labelFor="classificationCode" required="true" />
+            <Input
+              id="classificationCode"
+              value="{ggf>id}"
+              valueLiveUpdate="true"
+              liveChange=".onConfigurationEdit"
+            />
+          </VBox>
+          <VBox>
+            <Label text="{ggfText>name}" labelFor="classificationName" required="true" />
+            <Input
+              id="classificationName"
+              value="{ggf>name}"
+              valueLiveUpdate="true"
+              liveChange=".onConfigurationEdit"
+            />
+          </VBox>
+        </VBox>
+      </VBox>
+      <MessageStrip
+        text="{ggfText>noSelection}"
+        showIcon="true"
+        visible="{= !${ggf>/classificationsSelected} &amp;&amp; !${ggf>/narrow} }"
+        class="sapUiSmallMarginTop"
+      />
+    </HBox>
+  </VBox>
+</core:FragmentDefinition>

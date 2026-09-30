@@ -24,6 +24,13 @@ export interface InstallResult {
   versionRecorded: boolean;
 }
 
+export class MetadataInstallationBlockedError extends Error {
+  constructor(public readonly plan: MetadataPlan) {
+    super(`Instalação bloqueada por divergências de metadados:\n- ${plan.warnings.join("\n- ")}`);
+    this.name = "MetadataInstallationBlockedError";
+  }
+}
+
 interface Page<T> {
   value?: T[];
   "odata.nextLink"?: string;
@@ -34,6 +41,7 @@ interface FieldRow {
   Name?: string;
   Type?: string;
   Size?: number;
+  SubType?: string;
 }
 
 const MAX_PAGES = 100;
@@ -59,9 +67,16 @@ export class MetadataInstaller {
     return planMetadata(set, await this.readExisting(set));
   }
 
-  /** Planeja, executa e, se tudo deu certo, grava a versão dos metadados na FBO_SETUP. */
-  async install(set: MetadataSet, onProgress?: (action: MetadataAction) => void): Promise<InstallResult> {
+  /** Leitura incompleta ou divergência rejeita antes de qualquer escrita, inclusive da versão. */
+  async install(
+    set: MetadataSet,
+    onProgress?: (action: MetadataAction) => void,
+    verifyExposure?: (set: MetadataSet) => Promise<void>
+  ): Promise<InstallResult> {
+    if (set.module === "ggf" && set.version >= 2 && !verifyExposure)
+      throw new Error("GGF metadata exposure verifier is required before installation");
     const plan = await this.plan(set);
+    if (plan.warnings.length) throw new MetadataInstallationBlockedError(plan);
     const done: MetadataAction[] = [];
 
     for (const action of plan.actions) {
@@ -71,9 +86,18 @@ export class MetadataInstaller {
         done.push(action);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return { module: set.module, plan, done, failed: { action, message }, versionRecorded: false };
+        return {
+          module: set.module,
+          plan,
+          done,
+          failed: { action, message },
+          versionRecorded: false
+        };
       }
     }
+
+    // A criação do UDO pode retornar sucesso antes que outra sessão consiga usá-lo.
+    if (verifyExposure) await verifyExposure(set);
 
     // Só depois de criar tudo: no primeiro uso do núcleo a FBO_SETUP ainda não existia antes.
     const installed = await this.setup.getInstalledVersion(set.module);
@@ -113,15 +137,51 @@ export class MetadataInstaller {
   private async readFields(full: string): Promise<Map<string, ExistingField>> {
     const found = new Map<string, ExistingField>();
     const filter = encodeURIComponent(`TableName eq ${quote(`@${full}`)}`);
-    let path: string | undefined = `UserFieldsMD?$select=Name,Type,Size&$filter=${filter}`;
+    let path: string | undefined = `UserFieldsMD?$select=Name,Type,Size,SubType&$filter=${filter}`;
+    const visited = new Set<string>();
 
     for (let page = 0; path && page < MAX_PAGES; page++) {
+      if (visited.has(path))
+        throw new Error(`Leitura de campos de ${full} incompleta: ciclo na paginação.`);
+      visited.add(path);
       const response: Page<FieldRow> | undefined = await this.client.get<Page<FieldRow>>(path);
-      for (const row of response?.value ?? []) {
-        if (row.Name) found.set(row.Name, { type: row.Type, size: row.Size });
+      if (!response || !Array.isArray(response.value)) {
+        throw new Error(`Leitura de campos de ${full} incompleta: resposta sem coleção válida.`);
       }
-      const next: string | undefined = response?.["@odata.nextLink"] ?? response?.["odata.nextLink"];
+      for (const row of response.value) {
+        if (
+          !row ||
+          typeof row.Name !== "string" ||
+          !row.Name.trim() ||
+          typeof row.Type !== "string" ||
+          !row.Type.trim() ||
+          found.has(row.Name) ||
+          (row.Type === "db_Alpha" && (!Number.isSafeInteger(row.Size) || Number(row.Size) <= 0))
+        ) {
+          throw new Error(`Leitura de campos de ${full} incompleta: campo inválido ou duplicado.`);
+        }
+        found.set(row.Name, { type: row.Type, size: row.Size, subType: row.SubType });
+      }
+      const modern: string | undefined = response["@odata.nextLink"];
+      const legacy: string | undefined = response["odata.nextLink"];
+      if (
+        [modern, legacy].some(
+          (link) => link != null && (typeof link !== "string" || !link.trim())
+        ) ||
+        (modern != null && legacy != null && modern !== legacy)
+      ) {
+        throw new Error(`Leitura de campos de ${full} incompleta: próxima página inválida.`);
+      }
+      const next: string | undefined = modern ?? legacy;
       path = next ? relativeLink(next) : undefined;
+      if (next && !path) {
+        throw new Error(`Leitura de campos de ${full} incompleta: próxima página sem caminho.`);
+      }
+    }
+    if (path) {
+      throw new Error(
+        `Leitura de campos de ${full} incompleta: limite de ${MAX_PAGES} páginas com próxima página pendente.`
+      );
     }
     return found;
   }

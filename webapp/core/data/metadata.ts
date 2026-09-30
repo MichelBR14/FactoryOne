@@ -48,6 +48,10 @@ export interface ObjectDef {
   kind: "masterData" | "document";
   /** Tabelas de linhas (nomes curtos). */
   children?: readonly string[];
+  /** Posting/audit UDOs must not be deletable by ordinary document workflows. */
+  canDelete?: boolean;
+  /** Exposes the UDO in SAP General Authorizations for new installations. */
+  applyAuthorization?: boolean;
 }
 
 export interface MetadataSet {

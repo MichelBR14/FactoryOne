@@ -1,5 +1,7 @@
 // Única fonte do nome, prefixos e versão do produto. Não espalhar estes valores pelo código.
 export const PRODUCT_NAME = "FactoreOne";
+/** Nome exibido; PRODUCT_NAME permanece como identidade tecnica do pacote existente. */
+export const PRODUCT_DISPLAY_NAME = "FactoryOne";
 export const PRODUCT_VERSION = "0.1.0";
 
 /** Prefixo das tabelas de usuário (UDTs). Decisão registrada na seção 9 do CLAUDE.md. */

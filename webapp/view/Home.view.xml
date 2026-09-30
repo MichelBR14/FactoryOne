@@ -1,23 +1,57 @@
 <mvc:View
-    controllerName="factoreone.app.controller.Home"
-    xmlns:mvc="sap.ui.core.mvc"
-    xmlns="sap.m"
-    displayBlock="true">
-    <Page id="page" title="{view>/title}">
-        <content>
-            <ObjectHeader
-                id="header"
-                title="{view>/title}"
-                number="{view>/version}" />
-            <List
-                id="modules"
-                headerText="{view>/modulesHeader}"
-                items="{view>/modules}">
-                <StandardListItem
-                    title="{view>name}"
-                    info="{view>status}"
-                    infoState="{view>state}" />
-            </List>
-        </content>
-    </Page>
+  controllerName="factoreone.app.controller.Home"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  displayBlock="true"
+>
+  <Page id="page" title="{view>/title}" class="factoryMenuPage">
+    <content>
+      <VBox class="factoryMenuContent">
+        <HBox
+          justifyContent="SpaceBetween"
+          wrap="Wrap"
+          class="sapUiSmallMarginBottom"
+        >
+          <Title text="{i18n>modulesHeader}" level="H1" titleStyle="H2" />
+          <ObjectStatus text="{view>/version}" />
+        </HBox>
+        <MessageStrip
+          text="{i18n>developmentMode}"
+          type="Warning"
+          showIcon="true"
+          visible="{view>/development}"
+        />
+        <MessageStrip
+          text="{i18n>integrationPending}"
+          type="Information"
+          showIcon="true"
+          visible="{= !${view>/development} &amp;&amp; !${view>/sapRead} }"
+        />
+        <MessageStrip
+          text="{i18n>sapReadMode}"
+          type="Warning"
+          showIcon="true"
+          visible="{view>/sapRead}"
+        />
+        <FlexBox
+          id="modules"
+          items="{view>/modules}"
+          class="factoryTileGrid"
+          renderType="Div"
+        >
+          <GenericTile
+            header="{view>name}"
+            subheader="{view>status}"
+            pressEnabled="{view>available}"
+            frameType="TwoByOne"
+            press=".onModule"
+          >
+            <TileContent>
+              <ImageContent src="{view>icon}" />
+            </TileContent>
+          </GenericTile>
+        </FlexBox>
+      </VBox>
+    </content>
+  </Page>
 </mvc:View>

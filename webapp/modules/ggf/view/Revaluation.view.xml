@@ -1,0 +1,106 @@
+<mvc:View controllerName="factoreone.app.modules.ggf.controller.Revaluation" xmlns:mvc="sap.ui.core.mvc" xmlns="sap.m">
+  <Page id="revaluationPage" title="Prévia de Reavaliação GGF" showNavButton="true" navButtonPress=".onBack" busy="{preview>/busy}" busyIndicatorDelay="0" class="ggfPage">
+    <headerContent>
+      <Button icon="sap-icon://home" tooltip="Voltar ao menu GGF" press=".onMenu" />
+    </headerContent>
+    <content>
+      <VBox class="ggfPreviewContent">
+        <MessageStrip text="Modo de desenvolvimento | Dados fictícios locais | SAP desconectado" type="Information" showIcon="true" visible="{preview>/development}" class="sapUiSmallMarginBottom" />
+        <MessageStrip text="SAP real · SBODEMOBR2 · Somente leitura. Estoque atual e apuração têm datas distintas." type="Information" showIcon="true" visible="{preview>/sap}" class="sapUiSmallMarginBottom" />
+        <MessageStrip text="Conta de validação técnica. Não representa GGF funcional aprovado." type="Warning" showIcon="true" visible="{preview>/technical}" class="sapUiSmallMarginBottom" />
+        <MessageStrip text="Contabilização bloqueada. Nenhuma reavaliação ou alteração no SAP será executada." type="Warning" showIcon="true" class="sapUiSmallMarginBottom" />
+        <MessageStrip text="{preview>/error}" visible="{= !!${preview>/error} }" type="Error" showIcon="true" class="sapUiSmallMarginBottom" />
+        <VBox visible="{preview>/available}">
+          <HBox wrap="Wrap" class="ggfMetrics">
+            <VBox class="ggfMetric"><Text text="GGF das OPs (BRL)" /><Text text="{preview>/total}" class="ggfPreviewValue" /></VBox>
+            <VBox class="ggfMetric"><Text text="Reavaliação estimada (BRL)" /><Text text="{preview>/estimated}" class="ggfPreviewValue" /></VBox>
+            <VBox class="ggfMetric"><Text text="Apuração de origem" /><Text text="{preview>/allocationDate}" /></VBox>
+            <VBox class="ggfMetric"><Text text="Leitura do estoque" /><Text text="{preview>/stockDate}" /></VBox>
+          </HBox>
+          <Table id="revaluationRows" items="{preview>/rows}" autoPopinMode="true" popinLayout="GridSmall" alternateRowColors="true" fixedLayout="Strict" itemPress=".onDetails">
+            <headerToolbar><OverflowToolbar><Title text="Proposta por OP" level="H2" titleStyle="H4" /><ToolbarSpacer /><Button icon="sap-icon://download" text="Exportar prévia CSV" press=".onCsv" /><Button icon="sap-icon://document-text" text="Memória JSON" press=".onJson" /></OverflowToolbar></headerToolbar>
+            <columns>
+              <Column width="4rem" importance="High"><Text text="OP" /></Column>
+              <Column width="11rem" importance="High"><Text text="Item / depósito" /></Column>
+              <Column width="8rem"><Text text="Método" /></Column>
+              <Column hAlign="End" width="7rem"><Text text="Qtd. planejada" /></Column>
+              <Column hAlign="End" width="7rem"><Text text="Qtd. produzida" /></Column>
+              <Column hAlign="End" width="7rem"><Text text="Estoque atual" /></Column>
+              <Column hAlign="End" width="8rem"><Text text="Qtd. elegível" /></Column>
+              <Column hAlign="End" width="8rem"><Text text="Custo atual" /></Column>
+              <Column hAlign="End" width="7rem"><Text text="GGF total" /></Column>
+              <Column hAlign="End" width="8rem"><Text text="GGF unitário" /></Column>
+              <Column hAlign="End" width="8rem"><Text text="Custo ajustado da OP" /></Column>
+              <Column hAlign="End" width="8rem"><Text text="Reavaliação estimada" /></Column>
+              <Column width="12rem" importance="High"><Text text="Status" /></Column>
+            </columns>
+            <items><ColumnListItem type="Active"><cells>
+              <Text text="{preview>order}" />
+              <VBox><ObjectIdentifier title="{preview>item}" text="{preview>name}" /><Text text="Depósito {preview>warehouse} · {preview>unit}" /></VBox>
+              <Text text="{preview>methodText}" /><Text text="{preview>values/planned}" /><Text text="{preview>values/produced}" />
+              <Text text="{preview>values/stock}" /><Text text="{preview>values/eligible}" /><Text text="{preview>values/currentCost}" />
+              <Text text="{preview>values/ggf}" /><Text text="{preview>values/unitGgf}" /><Text text="{preview>values/adjustedCost}" /><Text text="{preview>values/estimated}" />
+              <VBox><ObjectStatus text="{preview>statusText}" state="{preview>state}" /><Text text="{preview>documentStatus}" visible="{= !!${preview>documentStatus} }" /></VBox></cells></ColumnListItem></items>
+          </Table>
+          <MessageStrip text="{preview>/fifoTechnicalError}" visible="{= !!${preview>/fifoTechnicalError} }" type="Warning" showIcon="true" class="sapUiSmallMarginTop" />
+          <VBox visible="{= !!${preview>/fifoTrace} }" class="sapUiMediumMarginTop">
+            <Title text="Rastreabilidade FIFO · cenário técnico" level="H2" titleStyle="H4" />
+            <MessageStrip text="Homologação técnica na SBODEMOBR2. O exemplo de GGF não integra a apuração nem gera documento." type="Information" showIcon="true" class="sapUiSmallMarginTop sapUiSmallMarginBottom" />
+            <Table items="{preview>/fifoRows}" autoPopinMode="true" popinLayout="GridSmall" fixedLayout="Strict">
+              <columns>
+                <Column width="5rem" importance="High"><Text text="OP" /></Column>
+                <Column width="12rem" importance="High"><Text text="Item" /></Column>
+                <Column hAlign="End" width="8rem"><Text text="Produzido" /></Column>
+                <Column width="11rem"><Text text="Camada original" /></Column>
+                <Column hAlign="End" width="8rem"><Text text="Qtd. original" /></Column>
+                <Column hAlign="End" width="8rem"><Text text="Consumido" /></Column>
+                <Column hAlign="End" width="8rem"><Text text="Em estoque" /></Column>
+                <Column width="14rem" importance="High"><Text text="Status FIFO" /></Column>
+              </columns>
+              <items><ColumnListItem><cells>
+                <Text text="{preview>order}" /><ObjectIdentifier title="{preview>item}" text="{preview>itemName}" />
+                <Text text="{preview>producedText} {preview>unit}" /><Text text="{preview>layer/label}" />
+                <Text text="{preview>originalText} {preview>unit}" /><Text text="{preview>consumedText} {preview>unit}" />
+                <Text text="{preview>remainingText} {preview>unit}" />
+                <ObjectStatus text="{preview>status}" state="Warning" />
+              </cells></ColumnListItem></items>
+            </Table>
+            <Panel headerText="Memória FIFO da OP 83" expandable="true" expanded="false" backgroundDesign="Transparent" class="sapUiSmallMarginTop">
+              <VBox class="sapUiSmallMargin">
+                <Text text="Receipt from Production {preview>/fifoTrace/receipt/docNum} / linha {preview>/fifoTrace/receipt/line} · {preview>/fifoTrace/originalText} {preview>/fifoTrace/unit}" />
+                <Text text="{preview>/fifoTrace/layer/label} · saldo {preview>/fifoTrace/remainingText} {preview>/fifoTrace/unit}" />
+                <Text text="{preview>/fifoTrace/issueText}" />
+                <Text text="GGF de exemplo: R$ 100,00 / 10 UN = R$ {preview>/fifoTrace/unitGgfText} por UN" class="sapUiSmallMarginTop" />
+                <ObjectStatus text="{preview>/fifoTrace/example/stockStatus}" state="Information" />
+                <Text text="Potencial sobre o estoque: R$ {preview>/fifoTrace/stockGgfText}" />
+                <ObjectStatus text="{preview>/fifoTrace/example/consumedStatus}" state="Warning" class="sapUiSmallMarginTop" />
+                <Text text="Parcela consumida pendente de regra contábil: R$ {preview>/fifoTrace/consumedGgfText}" />
+              </VBox>
+            </Panel>
+          </VBox>
+          <VBox id="previewDetails" visible="{= !!${preview>/selected} }" class="sapUiMediumMarginTop">
+            <OverflowToolbar><Title text="Memória da OP {preview>/selected/order}" level="H2" titleStyle="H4" /><ToolbarSpacer /><Button icon="sap-icon://decline" tooltip="Fechar memória da OP" press=".onCloseDetails" /></OverflowToolbar>
+            <MessageStrip text="{preview>/selected/reasonsText}" visible="{= !!${preview>/selected/reasonsText} }" type="Warning" showIcon="true" class="sapUiSmallMarginTop" />
+            <HBox wrap="Wrap" class="ggfMetrics">
+              <VBox class="ggfMetric"><Text text="Materiais originais (BRL)" /><Text text="{preview>/selected/values/materials}" class="ggfPreviewValue" /></VBox>
+              <VBox class="ggfMetric"><Text text="Recursos originais (BRL)" /><Text text="{preview>/selected/values/resources}" class="ggfPreviewValue" /></VBox>
+              <VBox class="ggfMetric"><Text text="Total original da OP (BRL)" /><Text text="{preview>/selected/values/original}" class="ggfPreviewValue" /></VBox>
+              <VBox class="ggfMetric"><Text text="Total histórico + GGF (BRL)" /><Text text="{preview>/selected/values/adjustedHistoricalTotal}" class="ggfPreviewValue" /></VBox>
+            </HBox>
+            <Table items="{preview>/selected/accounts}" autoPopinMode="true"><headerToolbar><Toolbar><Title text="GGF rateado por conta" level="H3" titleStyle="H5" /></Toolbar></headerToolbar><columns><Column><Text text="Conta" /></Column><Column><Text text="Descrição" /></Column><Column hAlign="End"><Text text="GGF (BRL)" /></Column></columns><items><ColumnListItem><cells><Text text="{preview>account}" /><Text text="{preview>name}" /><Text text="{preview>displayAmount}" /></cells></ColumnListItem></items></Table>
+            <Table items="{preview>/selected/receipts}" autoPopinMode="true"><headerToolbar><Toolbar><Title text="Recebimentos da produção" level="H3" titleStyle="H5" /></Toolbar></headerToolbar><columns><Column><Text text="Documento / linha" /></Column><Column><Text text="Data" /></Column><Column><Text text="Depósito" /></Column><Column hAlign="End"><Text text="Quantidade" /></Column></columns><items><ColumnListItem><cells><Text text="{preview>document} / {preview>line}" /><Text text="{preview>date}" /><Text text="{preview>warehouse}" /><Text text="{preview>quantity} {preview>unit}" /></cells></ColumnListItem></items></Table>
+            <Text text="Fonte do custo atual: {preview>/selected/costSource}" class="sapUiSmallMarginTop" />
+            <ObjectStatus text="Impacto se o preço individual da OP fosse aplicado ao saldo inteiro: BRL {preview>/selected/values/naivePriceChangeImpact}" state="Warning" class="sapUiSmallMarginTop" />
+          </VBox>
+          <Title text="Proposta por item e depósito" level="H2" titleStyle="H4" class="sapUiMediumMarginTop" />
+          <MessageStrip text="Alteração de preço afeta o saldo inteiro do item no escopo de avaliação. O custo ajustado por OP não é automaticamente o preço do documento SAP." type="Information" showIcon="true" class="sapUiSmallMarginTop sapUiSmallMarginBottom" />
+          <Table items="{preview>/scopes}" autoPopinMode="true"><columns><Column><Text text="Item" /></Column><Column><Text text="Depósito" /></Column><Column hAlign="End"><Text text="Preço proposto SAP (BRL)" /></Column><Column hAlign="End"><Text text="Efeito estimado (BRL)" /></Column></columns><items><ColumnListItem><cells><Text text="{preview>item}" /><Text text="{preview>warehouse}" /><Text text="{preview>price}" /><Text text="{preview>amount}" /></cells></ColumnListItem></items></Table>
+          <Panel headerText="Documento futuro · não enviado" expandable="true" expanded="false" backgroundDesign="Transparent" class="sapUiSmallMarginTop">
+            <Text text="{preview>/payload}" renderWhitespace="true" wrapping="true" />
+          </Panel>
+        </VBox>
+      </VBox>
+    </content>
+    <footer><OverflowToolbar><Button tooltip="Voltar ao fechamento" icon="sap-icon://nav-back" press=".onBack"><layoutData><OverflowToolbarLayoutData priority="NeverOverflow" /></layoutData></Button><ToolbarSpacer /><Button text="Atualizar leitura SAP" icon="sap-icon://refresh" press=".onLoad" visible="{preview>/sap}" /><Button text="Criar reavaliação" icon="sap-icon://locked" enabled="false"><layoutData><OverflowToolbarLayoutData priority="NeverOverflow" /></layoutData></Button></OverflowToolbar></footer>
+  </Page>
+</mvc:View>

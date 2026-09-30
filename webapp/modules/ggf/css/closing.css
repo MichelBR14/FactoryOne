@@ -1,0 +1,169 @@
+.ggfPage .ggfHeading {
+  padding: 1.5rem 2rem 1rem;
+  background: var(--sapGroup_ContentBackground);
+}
+
+.ggfPage .ggfHeadingTitle {
+  font-size: 1.5rem;
+  line-height: 1.35;
+}
+
+.ggfPage .ggfNotices {
+  padding: 0.75rem 2rem;
+}
+
+.ggfPage .ggfFilters,
+.ggfPage .ggfFieldRow,
+.ggfPage .ggfMetrics {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.ggfPage .ggfFilters,
+.ggfPage .ggfFieldRow {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ggfPage .ggfFilters {
+  column-gap: 3rem;
+  margin-bottom: 1rem;
+}
+
+.ggfPage .ggfMetrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 1rem 0;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--sapGroup_ContentBorderColor);
+}
+
+.ggfPage .ggfReconciliation {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ggfPage .ggfMetric .sapMObjectNumber {
+  margin-top: 0.375rem;
+  font-size: 1.5rem;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.ggfPage .ggfMetric .sapMText {
+  color: var(--sapContent_LabelColor);
+}
+
+.ggfPage .ggfMetric .sapMObjectNumberUnit {
+  font-size: 0.875rem;
+}
+
+.ggfPage .ggfSection {
+  margin-top: 1.5rem;
+}
+
+.ggfPage .ggfConfiguration {
+  padding: 0 2rem 1.5rem;
+  background: var(--sapGroup_ContentBackground);
+}
+
+.ggfPage .ggfNumeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.ggfPage .ggfMasterDetail {
+  display: grid;
+  grid-template-columns: minmax(15rem, 20rem) minmax(0, 1fr);
+  gap: 1.5rem;
+  padding-top: 1rem;
+}
+
+.ggfPage .ggfMaster {
+  min-width: 0;
+  padding-right: 1rem;
+  border-right: 1px solid var(--sapGroup_ContentBorderColor);
+}
+
+.ggfPage .ggfDetail {
+  min-width: 0;
+}
+
+.ggfPage .ggfDetailFields {
+  gap: 1.25rem;
+  padding: 1.5rem 0.5rem;
+  max-width: 56rem;
+}
+
+.ggfPage .ggfRecord {
+  padding: 1rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ggfPage .ggfRecord .sapMTitle {
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.ggfPage .ggfContext {
+  gap: 0.5rem 1.5rem;
+  padding-bottom: 1rem;
+}
+
+.ggfPage .ggfPreviewContent {
+  padding: 1rem;
+  min-width: 0;
+}
+
+.ggfPage .ggfPreviewContent .ggfMetric {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ggfPage .ggfPreviewContent .ggfPreviewValue {
+  color: var(--sapTextColor);
+  font-size: 1.25rem;
+  font-weight: bold;
+  margin-top: 0.375rem;
+}
+
+@media (max-width: 600px) {
+  .ggfPage .ggfMasterDetail {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .ggfPage .ggfMaster {
+    padding-right: 0;
+    border-right: 0;
+  }
+  .ggfPage .ggfHeading {
+    padding: 1rem 1rem 0.75rem;
+  }
+
+  .ggfPage .ggfNotices {
+    padding: 0.5rem 1rem;
+  }
+
+  .ggfPage .ggfFilters {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+  }
+
+  .ggfPage .ggfMetrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ggfPage .ggfReconciliation {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .ggfPage .ggfReconciliation > :last-child {
+    grid-column: 1 / -1;
+  }
+
+  .ggfPage .ggfConfiguration {
+    padding: 0 1rem 1rem;
+  }
+}

@@ -40,6 +40,12 @@
       "compact": true,
       "cozy": true
     },
+    "resources": {
+      "css": [
+        { "uri": "modules/ggf/css/closing.css" },
+        { "uri": "css/navigation.css" }
+      ]
+    },
     "models": {
       "i18n": {
         "type": "sap.ui.model.resource.ResourceModel",
@@ -62,12 +68,52 @@
       },
       "routes": [
         {
+          "name": "ggfRevaluation",
+          "pattern": "ggf/reavaliacao",
+          "target": ["ggfRevaluation"]
+        },
+        {
+          "name": "ggfClosing",
+          "pattern": "ggf/fechamento",
+          "target": ["ggfFunction"]
+        },
+        {
+          "name": "ggfClassifications",
+          "pattern": "ggf/classificacao",
+          "target": ["ggfFunction"]
+        },
+        {
+          "name": "ggfAllocations",
+          "pattern": "ggf/rateios",
+          "target": ["ggfFunction"]
+        },
+        {
+          "name": "ggf",
+          "pattern": "ggf",
+          "target": ["ggf"]
+        },
+        {
           "name": "main",
           "pattern": "",
           "target": ["main"]
         }
       ],
       "targets": {
+        "ggfRevaluation": {
+          "id": "ggfRevaluation",
+          "name": "Revaluation",
+          "path": "factoreone.app.modules.ggf.view"
+        },
+        "ggf": {
+          "id": "ggf",
+          "name": "Menu",
+          "path": "factoreone.app.modules.ggf.view"
+        },
+        "ggfFunction": {
+          "id": "ggfFunction",
+          "name": "Closing",
+          "path": "factoreone.app.modules.ggf.view"
+        },
         "main": {
           "id": "main",
           "name": "Home"

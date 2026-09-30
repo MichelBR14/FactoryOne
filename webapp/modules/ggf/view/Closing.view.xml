@@ -1,0 +1,772 @@
+<mvc:View
+  controllerName="factoreone.app.modules.ggf.controller.Closing"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns:core="sap.ui.core"
+  xmlns="sap.m"
+  displayBlock="true"
+>
+  <Page
+    id="closingPage"
+    class="ggfPage"
+    title="{ggfText>moduleName}"
+    showNavButton="true"
+    navButtonPress=".onHome"
+    navButtonTooltip="{ggfText>backToGgf}"
+    showFooter="{ggf>/ready}"
+    backgroundDesign="List"
+  >
+    <content>
+      <VBox class="ggfHeading">
+        <Title
+          text="{= ${ggf>/workspace} === 'closing' ? ${ggfText>closingScreen} : ${ggf>/workspace} === 'classifications' ? ${ggfText>classificationScreen} : ${ggfText>allocationsScreen} }"
+          level="H1"
+          wrapping="true"
+          class="ggfHeadingTitle"
+        />
+        <HBox
+          justifyContent="SpaceBetween"
+          wrap="Wrap"
+          class="sapUiTinyMarginTop"
+        >
+          <ObjectStatus
+            text="{ggfText>unsaved}"
+            state="Warning"
+            visible="{ggf>/dirty}"
+          />
+          <ObjectStatus
+            id="progressLabel"
+            text="{ggfText>progress} {ggf>/step} {ggfText>ofThree}"
+            visible="{= ${ggf>/ready} &amp;&amp; ${ggf>/workspace} === 'closing' }"
+          />
+          <ObjectStatus
+            text="{ggfText>integrityValid}"
+            state="Success"
+            visible="{= ${ggf>/integrityStatus} === 'VALID' }"
+          />
+          <ObjectStatus
+            text="{ggfText>integrityViolated}"
+            state="Error"
+            visible="{= ${ggf>/integrityStatus} === 'INTEGRITY_VIOLATION' }"
+          />
+          <ObjectStatus
+            text="{ggfText>sapMetadataUnavailableStatus}"
+            state="Error"
+            visible="{= ${ggf>/integrityStatus} === 'SAP_METADATA_UNAVAILABLE' }"
+          />
+          <ObjectStatus
+            text="{ggfText>integrityNotApplicable}"
+            state="None"
+            visible="{= ${ggf>/workspace} === 'closing' &amp;&amp; ${ggf>/integrityStatus} === 'NOT_APPLICABLE' }"
+          />
+        </HBox>
+      </VBox>
+      <VBox class="ggfNotices">
+        <MessageStrip
+          text="{ggfText>development}"
+          type="Warning"
+          showIcon="true"
+          visible="{ggf>/development}"
+        />
+        <MessageStrip
+          text="{ggfText>unavailable}"
+          type="Information"
+          showIcon="true"
+          visible="{= !${ggf>/development} &amp;&amp; !${ggf>/sapRead} }"
+        />
+        <MessageStrip
+          text="{ggfText>sapReadMode}"
+          type="Warning"
+          showIcon="true"
+          visible="{ggf>/sapRead}"
+        />
+        <HBox
+          wrap="Wrap"
+          alignItems="End"
+          class="sapUiTinyMarginTop"
+          visible="{= ${ggf>/sapRead} &amp;&amp; ${ggf>/workspace} === 'closing' }"
+        >
+          <VBox class="sapUiTinyMarginEnd">
+            <Label text="{ggfText>integrityClosingId}" labelFor="integrityClosingId" />
+            <Input id="integrityClosingId" value="{ggf>/closingId}" width="14rem" maxLength="30" />
+          </VBox>
+          <Button
+            text="{ggfText>integrityInspect}"
+            icon="sap-icon://inspect"
+            press=".onInspectIntegrity"
+            busy="{ggf>/integrityBusy}"
+            enabled="{= !${ggf>/integrityBusy} }"
+          />
+        </HBox>
+        <MessageStrip
+          text="{ggfText>integrityViolation}"
+          type="Error"
+          showIcon="true"
+          visible="{= ${ggf>/workspace} === 'closing' &amp;&amp; ${ggf>/integrityStatus} === 'INTEGRITY_VIOLATION' }"
+          class="sapUiSmallMarginTop"
+        />
+        <MessageStrip
+          text="{ggfText>sapMetadataUnavailable}"
+          type="Error"
+          showIcon="true"
+          visible="{= ${ggf>/workspace} === 'closing' &amp;&amp; ${ggf>/integrityStatus} === 'SAP_METADATA_UNAVAILABLE' }"
+          class="sapUiSmallMarginTop"
+        />
+        <HBox
+          id="integrityFacts"
+          wrap="Wrap"
+          class="sapUiSmallMarginTop"
+          visible="{= ${ggf>/workspace} === 'closing' &amp;&amp; !!${ggf>/integrityReport} }"
+        >
+          <VBox width="10rem" class="sapUiSmallMarginEnd sapUiTinyMarginBottom">
+            <Label text="{ggfText>integrityClosingId}" />
+            <Text text="{ggf>/integrityReport/closingId}" wrapping="true" />
+          </VBox>
+          <VBox width="7rem" class="sapUiSmallMarginEnd sapUiTinyMarginBottom">
+            <Label text="{ggfText>integrityVersion}" />
+            <Text text="{ggf>/integrityReport/version}" />
+          </VBox>
+          <VBox width="16rem" class="sapUiSmallMarginEnd sapUiTinyMarginBottom">
+            <Label text="{ggfText>integrityDocument}" />
+            <Text text="{ggf>/integrityDocument}" wrapping="true" />
+          </VBox>
+          <VBox width="9rem" class="sapUiSmallMarginEnd sapUiTinyMarginBottom">
+            <Label text="{ggfText>integrityClosingStatus}" />
+            <Text text="{ggf>/integrityReport/closingStatus}" wrapping="true" />
+          </VBox>
+          <VBox width="12rem" class="sapUiTinyMarginBottom">
+            <Label text="{ggfText>integrityDetectedAt}" />
+            <Text text="{ggf>/integrityDetectedAt}" wrapping="true" />
+          </VBox>
+        </HBox>
+        <MessageStrip
+          id="error"
+          text="{ggf>/error}"
+          type="Error"
+          showIcon="true"
+          visible="{= !!${ggf>/error} }"
+          class="sapUiSmallMarginTop"
+        />
+      </VBox>
+      <Wizard
+        id="steps"
+        renderMode="Page"
+        height="auto"
+        showNextButton="false"
+        stepTitleLevel="H2"
+        navigationChange=".onStepNavigation"
+        busy="{ggf>/busy}"
+        busyIndicatorDelay="0"
+        visible="{= ${ggf>/ready} &amp;&amp; ${ggf>/workspace} === 'closing' }"
+        class="sapUiResponsivePadding--header sapUiResponsivePadding--content"
+      >
+        <WizardStep
+          id="periodStep"
+          title="{ggfText>step1}"
+          validated="{ggf>/calculated}"
+        >
+          <HBox class="ggfFilters">
+            <VBox>
+              <Title
+                text="{ggfText>periodGroup}"
+                level="H3"
+                titleStyle="H5"
+                class="sapUiSmallMarginBottom"
+              />
+              <HBox class="ggfFieldRow">
+                <VBox>
+                  <Label
+                    text="{ggfText>start}"
+                    labelFor="startDate"
+                    required="true"
+                  />
+                  <DatePicker
+                    id="startDate"
+                    width="100%"
+                    value="{ggf>/filter/start}"
+                    valueFormat="yyyy-MM-dd"
+                    displayFormat="dd/MM/yyyy"
+                    change=".onEdit"
+                  />
+                </VBox>
+                <VBox>
+                  <Label
+                    text="{ggfText>end}"
+                    labelFor="endDate"
+                    required="true"
+                  />
+                  <DatePicker
+                    id="endDate"
+                    width="100%"
+                    value="{ggf>/filter/end}"
+                    valueFormat="yyyy-MM-dd"
+                    displayFormat="dd/MM/yyyy"
+                    change=".onEdit"
+                  />
+                </VBox>
+              </HBox>
+            </VBox>
+            <VBox>
+              <Title
+                text="{ggfText>scopeGroup}"
+                level="H3"
+                titleStyle="H5"
+                class="sapUiSmallMarginBottom"
+              />
+              <HBox class="ggfFieldRow">
+                <VBox>
+                  <Label text="{ggfText>branch}" labelFor="branch" />
+                  <Select
+                    id="branch"
+                    enabled="{= !${ggf>/sapRead} }"
+                    width="100%"
+                    selectedKey="{ggf>/filter/branch}"
+                    items="{ggf>/branches}"
+                    change=".onEdit"
+                  >
+                    <core:Item key="{ggf>key}" text="{ggf>name}" />
+                  </Select>
+                </VBox>
+                <VBox>
+                  <Label text="{ggfText>costCenter}" labelFor="costCenter" />
+                  <Select
+                    id="costCenter"
+                    enabled="{= !${ggf>/sapRead} }"
+                    width="100%"
+                    selectedKey="{ggf>/filter/costCenter}"
+                    items="{ggf>/costCenters}"
+                    change=".onEdit"
+                  >
+                    <core:Item key="{ggf>key}" text="{ggf>name}" />
+                  </Select>
+                </VBox>
+              </HBox>
+            </VBox>
+          </HBox>
+          <OverflowToolbar design="Transparent">
+            <Button
+              id="calculate"
+              text="{= ${ggf>/sapRead} ? ${ggfText>sapReadAction} : ${ggfText>calculate} }"
+              icon="sap-icon://simulate"
+              type="{= ${ggf>/calculated} ? 'Default' : 'Emphasized' }"
+              press=".onCalculate"
+            />
+            <ToolbarSpacer />
+            <ObjectStatus
+              text="{ggfText>pending}"
+              visible="{= !${ggf>/calculated} &amp;&amp; !${ggf>/sapRead} }"
+            />
+            <ObjectStatus
+              text="{ggfText>calculated}"
+              state="Success"
+              icon="sap-icon://accept"
+              visible="{ggf>/calculated}"
+            />
+          </OverflowToolbar>
+          <VBox visible="{= !!${ggf>/sapReport} }" class="ggfSection">
+            <Title text="{ggfText>sapConference}" level="H3" />
+            <Text text="{ggf>/sapReport/company}" />
+            <Text text="{ggf>/sapReport/capturedAt}" />
+            <MessageStrip
+              text="{ggfText>sapLedgerScope}"
+              type="Information"
+              showIcon="true"
+              class="sapUiSmallMarginTop sapUiSmallMarginBottom"
+            />
+            <HBox wrap="Wrap" class="ggfFieldRow">
+              <ObjectNumber
+                number="{ggf>/sapReport/journal/debit}"
+                unit="{ggfText>sapDebits}"
+              />
+              <ObjectNumber
+                number="{ggf>/sapReport/journal/credit}"
+                unit="{ggfText>sapCredits}"
+              />
+              <ObjectNumber
+                number="{ggf>/sapReport/journal/difference}"
+                unit="{ggfText>difference}"
+              />
+            </HBox>
+            <Table
+              id="sapReads"
+              items="{ggf>/sapReport/reads}"
+              class="sapUiSmallMarginTop"
+            >
+              <columns>
+                <Column>
+                  <Text text="{ggfText>sapEntity}" />
+                </Column>
+                <Column hAlign="End" width="5rem">
+                  <Text text="{ggfText>sapPages}" />
+                </Column>
+                <Column hAlign="End" width="5rem">
+                  <Text text="{ggfText>sapRows}" />
+                </Column>
+                <Column
+                  hAlign="End"
+                  width="5rem"
+                  minScreenWidth="Tablet"
+                  demandPopin="true"
+                >
+                  <Text text="{ggfText>sapCount}" />
+                </Column>
+              </columns>
+              <items>
+                <ColumnListItem>
+                  <cells>
+                    <Text text="{ggf>entity}" wrapping="true" />
+                    <Text text="{ggf>pages}" />
+                    <Text text="{ggf>rows}" />
+                    <Text text="{ggf>count}" />
+                  </cells>
+                </ColumnListItem>
+              </items>
+            </Table>
+            <List
+              items="{ggf>/sapReport/differences}"
+              noDataText="{ggfText>sapNoStructuralDifference}"
+            >
+              <items>
+                <StandardListItem title="{ggf>}" />
+              </items>
+            </List>
+            <Table
+              id="sapAccounts"
+              items="{ggf>/sapReport/accounts}"
+              growing="true"
+              growingThreshold="20"
+              class="sapUiSmallMarginTop"
+            >
+              <headerToolbar>
+                <OverflowToolbar>
+                  <Title text="{ggfText>sapAccountBalances}" level="H4" />
+                </OverflowToolbar>
+              </headerToolbar>
+              <columns>
+                <Column>
+                  <Text text="{ggfText>account}" />
+                </Column>
+                <Column hAlign="End" minScreenWidth="Tablet" demandPopin="true">
+                  <Text text="{ggfText>sapDebits}" />
+                </Column>
+                <Column hAlign="End" minScreenWidth="Tablet" demandPopin="true">
+                  <Text text="{ggfText>sapCredits}" />
+                </Column>
+                <Column hAlign="End" minScreenWidth="Tablet" demandPopin="true">
+                  <Text text="{ggfText>sapNet}" />
+                </Column>
+              </columns>
+              <items>
+                <ColumnListItem>
+                  <cells>
+                    <ObjectIdentifier title="{ggf>account}" text="{ggf>name}" />
+                    <Text text="{ggf>debit}" />
+                    <Text text="{ggf>credit}" />
+                    <Text text="{ggf>net}" />
+                  </cells>
+                </ColumnListItem>
+              </items>
+            </Table>
+          </VBox>
+          <VBox visible="{ggf>/calculated}" class="ggfSection">
+            <Title text="{ggfText>summary}" level="H3" titleStyle="H5" />
+            <HBox
+              id="criterionSummary"
+              items="{ggf>/criterionTotals}"
+              class="ggfMetrics"
+            >
+              <VBox class="ggfMetric">
+                <Text text="{ggf>name}" />
+                <ObjectNumber number="{ggf>amount}" unit="BRL" />
+              </VBox>
+            </HBox>
+            <Table
+              id="balances"
+              items="{ggf>/balances}"
+              fixedLayout="Strict"
+              alternateRowColors="true"
+            >
+              <headerToolbar>
+                <OverflowToolbar>
+                  <Title text="{ggfText>balances}" level="H3" titleStyle="H5" />
+                  <ToolbarSpacer />
+                  <ObjectStatus
+                    title="{ggfText>total}"
+                    text="{ggf>/total} BRL"
+                  />
+                </OverflowToolbar>
+              </headerToolbar>
+              <columns>
+                <Column>
+                  <Text text="{ggfText>account}" />
+                </Column>
+                <Column hAlign="End" width="9rem">
+                  <Text text="{ggfText>amount}" />
+                </Column>
+                <Column minScreenWidth="Desktop" demandPopin="true">
+                  <Text text="{ggfText>source}" />
+                </Column>
+              </columns>
+              <items>
+                <ColumnListItem>
+                  <cells>
+                    <ObjectIdentifier title="{ggf>account}" text="{ggf>name}" />
+                    <ObjectNumber
+                      number="{ggf>amount}"
+                      emphasized="false"
+                      class="ggfNumeric"
+                    />
+                    <Text text="{ggf>refs}" />
+                  </cells>
+                </ColumnListItem>
+              </items>
+            </Table>
+          </VBox>
+        </WizardStep>
+        <WizardStep
+          id="ordersStep"
+          title="{ggfText>step2}"
+          validated="{ggf>/calculated}"
+        >
+          <HBox wrap="Wrap" class="ggfContext">
+            <ObjectStatus
+              title="{ggfText>branch}"
+              text="{ggf>/filter/branch}"
+            />
+            <ObjectStatus
+              title="{ggfText>orderCount}"
+              text="{= ${ggf>/orders}.length }"
+            />
+            <ObjectStatus text="{ggfText>localCurrency}" />
+          </HBox>
+          <Table
+            id="orderBases"
+            items="{ggf>/orders}"
+            fixedLayout="Strict"
+            alternateRowColors="true"
+          >
+            <headerToolbar>
+              <OverflowToolbar>
+                <Title text="{ggfText>bases}" level="H3" titleStyle="H5" />
+                <ToolbarSpacer />
+                <Button
+                  tooltip="{ggfText>export}"
+                  icon="sap-icon://download"
+                  press=".onExport"
+                />
+              </OverflowToolbar>
+            </headerToolbar>
+            <columns>
+              <Column>
+                <Text text="{ggfText>order}" />
+              </Column>
+              <Column hAlign="End" minScreenWidth="Tablet" demandPopin="true">
+                <Text text="{ggfText>directCost}" />
+              </Column>
+              <Column hAlign="End" minScreenWidth="Tablet" demandPopin="true">
+                <Text text="{ggfText>quantity}" />
+              </Column>
+              <Column hAlign="End" minScreenWidth="Tablet" demandPopin="true">
+                <Text text="{ggfText>hours}" />
+              </Column>
+              <Column hAlign="End" minScreenWidth="Desktop" demandPopin="true">
+                <Text text="{ggfText>current}" />
+              </Column>
+            </columns>
+            <items>
+              <ColumnListItem>
+                <cells>
+                  <ObjectIdentifier title="{ggf>number}" text="{ggf>item}" />
+                  <Text text="{ggf>directCost}" class="ggfNumeric" />
+                  <Text
+                    text="{ggf>quantity} {ggf>basisEvidence/quantity/unit}"
+                    class="ggfNumeric"
+                  />
+                  <Text text="{ggf>hours} h" class="ggfNumeric" />
+                  <Text text="{ggf>current}" class="ggfNumeric" />
+                </cells>
+              </ColumnListItem>
+            </items>
+          </Table>
+          <Table
+            items="{ggf>/groupBases}"
+            headerText="{ggfText>groupHours}"
+            class="ggfSection"
+            alternateRowColors="true"
+          >
+            <columns>
+              <Column>
+                <Text text="{ggfText>order}" />
+              </Column>
+              <Column>
+                <Text text="{ggfText>group}" />
+              </Column>
+              <Column hAlign="End">
+                <Text text="{ggfText>hours}" />
+              </Column>
+            </columns>
+            <items>
+              <ColumnListItem>
+                <cells>
+                  <Text text="{ggf>order}" />
+                  <Text text="{ggf>group}" />
+                  <Text text="{ggf>hours} h" class="ggfNumeric" />
+                </cells>
+              </ColumnListItem>
+            </items>
+          </Table>
+        </WizardStep>
+        <WizardStep
+          id="distributionStep"
+          title="{ggfText>step3}"
+          validated="false"
+        >
+          <OverflowToolbar>
+            <Title text="{ggfText>step3}" level="H3" titleStyle="H5" />
+            <ToolbarSpacer />
+            <Button text="Prévia de reavaliação" icon="sap-icon://simulate" type="Emphasized" press=".onRevaluation" enabled="{ggf>/calculated}" visible="{ggf>/development}"><layoutData><OverflowToolbarLayoutData priority="NeverOverflow" /></layoutData></Button>
+          </OverflowToolbar>
+          <MessageStrip
+            text="{ggfText>postingBlocked}"
+            type="Warning"
+            showIcon="true"
+          />
+          <HBox id="reconciliation" class="ggfMetrics ggfReconciliation">
+            <VBox class="ggfMetric">
+              <Text text="{ggfText>total}" />
+              <ObjectNumber number="{ggf>/total}" unit="BRL" />
+            </VBox>
+            <VBox class="ggfMetric">
+              <Text text="{ggfText>distributed}" />
+              <ObjectNumber number="{ggf>/distributed}" unit="BRL" />
+            </VBox>
+            <VBox class="ggfMetric">
+              <Text text="{ggfText>difference}" />
+              <ObjectNumber
+                number="{ggf>/difference}"
+                unit="BRL"
+                state="Success"
+              />
+            </VBox>
+          </HBox>
+          <Table
+            id="distribution"
+            items="{ggf>/orders}"
+            fixedLayout="Strict"
+            alternateRowColors="true"
+          >
+            <headerToolbar>
+              <OverflowToolbar>
+                <Title text="{ggfText>orderCount}" level="H3" titleStyle="H5" />
+                <ToolbarSpacer />
+                <ObjectStatus
+                  text="{ggfText>reconciled}"
+                  state="Success"
+                  icon="sap-icon://accept"
+                />
+                <Button
+                  tooltip="{ggfText>export}"
+                  icon="sap-icon://download"
+                  press=".onExport"
+                />
+              </OverflowToolbar>
+            </headerToolbar>
+            <columns>
+              <Column>
+                <Text text="{ggfText>order}" />
+              </Column>
+              <Column hAlign="End" minScreenWidth="Tablet" demandPopin="true">
+                <Text text="{ggfText>allocated}" />
+              </Column>
+              <Column hAlign="End" minScreenWidth="Desktop" demandPopin="true">
+                <Text text="{ggfText>current}" />
+              </Column>
+              <Column hAlign="End" minScreenWidth="Tablet" demandPopin="true">
+                <Text text="{ggfText>resulting}" />
+              </Column>
+            </columns>
+            <items>
+              <ColumnListItem>
+                <cells>
+                  <ObjectIdentifier title="{ggf>number}" text="{ggf>item}" />
+                  <ObjectNumber number="{ggf>allocated}" class="ggfNumeric" />
+                  <Text text="{ggf>current}" class="ggfNumeric" />
+                  <ObjectNumber number="{ggf>resulting}" class="ggfNumeric" />
+                </cells>
+              </ColumnListItem>
+            </items>
+          </Table>
+          <Panel
+            id="tracePanel"
+            headerText="{ggfText>trace}"
+            expandable="true"
+            expanded="false"
+            backgroundDesign="Transparent"
+            class="ggfSection"
+          >
+            <ObjectStatus
+              title="{ggfText>snapshot}"
+              text="{ggf>/snapshotId}"
+              class="sapUiSmallMarginBottom"
+            />
+            <Table items="{ggf>/accountMemory}" headerText="{ggfText>accountMemory}" autoPopinMode="true" alternateRowColors="true">
+              <columns>
+                <Column importance="High"><Text text="{ggfText>account}" /></Column>
+                <Column><Text text="{ggfText>amount}" /></Column>
+                <Column><Text text="{ggfText>accountPercent}" /></Column>
+                <Column><Text text="{ggfText>applicableAmount}" /></Column>
+                <Column><Text text="{ggfText>accountRounding}" /></Column>
+                <Column><Text text="{ggfText>distributed}" /></Column>
+                <Column><Text text="{ggfText>difference}" /></Column>
+              </columns>
+              <items><ColumnListItem><cells>
+                <Text text="{ggf>account}" /><Text text="{ggf>periodAmount}" />
+                <Text text="{ggf>percent}" /><Text text="{ggf>applicableAmount}" />
+                <Text text="{ggf>rounding}" /><Text text="{ggf>distributed}" /><Text text="{ggf>difference}" />
+              </cells></ColumnListItem></items>
+            </Table>
+            <Table items="{ggf>/costComponents}" headerText="{ggfText>costComponents}" autoPopinMode="true" alternateRowColors="true">
+              <columns>
+                <Column importance="High"><Text text="{ggfText>order}" /></Column>
+                <Column><Text text="{ggfText>component}" /></Column>
+                <Column><Text text="{ggfText>amount}" /></Column>
+                <Column><Text text="{ggfText>source}" /></Column>
+              </columns>
+              <items><ColumnListItem><cells>
+                <Text text="{ggf>order}" /><Text text="{ggf>code}" />
+                <Text text="{ggf>amount}" /><Text text="{ggf>refs}" />
+              </cells></ColumnListItem></items>
+            </Table>
+            <Table
+              id="traceTable"
+              items="{ggf>/traces}"
+              autoPopinMode="true"
+              alternateRowColors="true"
+            >
+              <columns>
+                <Column importance="High">
+                  <Text text="{ggfText>account}" />
+                </Column>
+                <Column importance="High">
+                  <Text text="{ggfText>order}" />
+                </Column>
+                <Column>
+                  <Text text="{ggfText>criterion}" />
+                </Column>
+                <Column>
+                  <Text text="{ggfText>group}" />
+                </Column>
+                <Column hAlign="End">
+                  <Text text="{ggfText>percent}" />
+                </Column>
+                <Column hAlign="End">
+                  <Text text="{ggfText>pool}" />
+                </Column>
+                <Column hAlign="End">
+                  <Text text="{ggfText>basis}" />
+                </Column>
+                <Column hAlign="End">
+                  <Text text="{ggfText>totalBasis}" />
+                </Column>
+                <Column hAlign="End">
+                  <Text text="{ggfText>rounding}" />
+                </Column>
+                <Column hAlign="End">
+                  <Text text="{ggfText>allocated}" />
+                </Column>
+                <Column><Text text="{ggfText>participation}" /></Column>
+                <Column><Text text="{ggfText>unit}" /></Column>
+                <Column><Text text="{ggfText>groupRounding}" /></Column>
+              </columns>
+              <items>
+                <ColumnListItem>
+                  <cells>
+                    <Text text="{ggf>account}" />
+                    <Text text="{ggf>order}" />
+                    <Text text="{ggf>criterion}" />
+                    <Text text="{ggf>group}" />
+                    <Text text="{ggf>percent}" />
+                    <Text text="{ggf>poolAmount}" />
+                    <Text text="{ggf>basis}" />
+                    <Text text="{ggf>totalBasis}" />
+                    <Text text="{ggf>roundingMinor}" />
+                    <Text text="{ggf>amount}" />
+                    <Text text="{ggf>participationPercent}" />
+                    <Text text="{ggf>basisUnit}" />
+                    <Text text="{ggf>groupRoundingMinor}" />
+                  </cells>
+                </ColumnListItem>
+              </items>
+            </Table>
+          </Panel>
+        </WizardStep>
+      </Wizard>
+      <core:Fragment
+        fragmentName="factoreone.app.modules.ggf.view.Classifications"
+        type="XML"
+      />
+      <core:Fragment
+        fragmentName="factoreone.app.modules.ggf.view.Allocations"
+        type="XML"
+      />
+    </content>
+    <footer>
+      <OverflowToolbar>
+        <Button
+          text="{ggfText>previous}"
+          icon="sap-icon://navigation-left-arrow"
+          press=".onPrevious"
+          visible="{= ${ggf>/workspace} === 'closing' &amp;&amp; ${ggf>/step} !== '1' }"
+        />
+        <Button
+          text="{ggfText>reset}"
+          icon="sap-icon://reset"
+          press=".onReset"
+          visible="{= ${ggf>/workspace} !== 'closing' }"
+        />
+        <ToolbarSpacer />
+        <Button
+          text="{ggfText>validate}"
+          icon="sap-icon://validate"
+          press=".onValidate"
+          visible="{= ${ggf>/workspace} !== 'closing' }"
+        />
+        <Button
+          text="{ggfText>save}"
+          icon="sap-icon://save"
+          type="Emphasized"
+          press=".onSave"
+          visible="{= ${ggf>/workspace} !== 'closing' }"
+        >
+          <layoutData>
+            <OverflowToolbarLayoutData priority="NeverOverflow" />
+          </layoutData>
+        </Button>
+        <Button
+          id="next"
+          text="{ggfText>next}"
+          icon="sap-icon://navigation-right-arrow"
+          iconFirst="false"
+          type="Emphasized"
+          press=".onNext"
+          visible="{= ${ggf>/workspace} === 'closing' &amp;&amp; ${ggf>/step} !== '3' }"
+          enabled="{= ${ggf>/calculated} &amp;&amp; !${ggf>/busy} }"
+        >
+          <layoutData>
+            <OverflowToolbarLayoutData priority="NeverOverflow" />
+          </layoutData>
+        </Button>
+        <Button
+          text="{ggfText>confirm}"
+          icon="sap-icon://locked"
+          enabled="false"
+          press=".onConfirm"
+          visible="{= ${ggf>/workspace} === 'closing' &amp;&amp; ${ggf>/step} === '3' }"
+        >
+          <layoutData>
+            <OverflowToolbarLayoutData priority="NeverOverflow" />
+          </layoutData>
+        </Button>
+      </OverflowToolbar>
+    </footer>
+  </Page>
+</mvc:View>

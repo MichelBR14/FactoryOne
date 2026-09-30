@@ -1,0 +1,196 @@
+<core:FragmentDefinition xmlns:core="sap.ui.core" xmlns="sap.m">
+  <VBox
+    class="ggfConfiguration"
+    visible="{= ${ggf>/ready} &amp;&amp; ${ggf>/workspace} === 'allocations' }"
+  >
+    <HBox class="ggfMasterDetail">
+      <VBox class="ggfMaster" visible="{= !${ggf>/narrow} || !${ggf>/detailOpen} }">
+        <OverflowToolbar design="Transparent">
+          <Title id="accountListTitle" text="{ggfText>accounts}" level="H2" titleStyle="H5" />
+          <ToolbarSpacer />
+          <Button icon="sap-icon://add" tooltip="{ggfText>addAccount}" press=".onAddAccount" />
+        </OverflowToolbar>
+        <SearchField
+          width="100%"
+          value="{ggf>/accountsSearch}"
+          placeholder="{ggfText>searchAccounts}"
+          liveChange=".onAccountSearch"
+          class="sapUiSmallMarginTop sapUiSmallMarginBottom"
+        />
+        <List
+          id="accounts"
+          items="{ggf>/config/accounts}"
+          mode="SingleSelectMaster"
+          includeItemInSelection="true"
+          selectionChange=".onRecordSelect"
+          itemPress=".onRecordSelect"
+          noDataText="{ggfText>noRecords}"
+          ariaLabelledBy="accountListTitle"
+        >
+          <CustomListItem type="Active">
+            <VBox class="ggfRecord">
+              <Title
+                text="{= ${ggf>account} || ${ggfText>newAccount} }"
+                level="H3"
+                titleStyle="H6"
+                wrapping="true"
+              />
+              <Text text="{ggf>name}" class="sapUiTinyMarginTop" />
+              <ObjectStatus
+                text="{path: 'ggf>criterion', formatter: '.criterionName'}"
+                class="sapUiTinyMarginTop"
+              />
+              <ObjectStatus
+                text="{ggfText>inactive}"
+                state="Warning"
+                visible="{= !${ggf>active} }"
+                class="sapUiTinyMarginTop"
+              />
+            </VBox>
+          </CustomListItem>
+        </List>
+      </VBox>
+      <VBox
+        id="accountsDetail"
+        class="ggfDetail"
+        visible="{= ${ggf>/accountsSelected} &amp;&amp; (!${ggf>/narrow} || ${ggf>/detailOpen}) }"
+      >
+        <OverflowToolbar design="Transparent">
+          <Button
+            icon="sap-icon://nav-back"
+            tooltip="{ggfText>backAccounts}"
+            visible="{ggf>/narrow}"
+            press=".onRecordList"
+          />
+          <Title text="{ggfText>accountDetails}" level="H2" titleStyle="H5" />
+          <ToolbarSpacer />
+          <Button icon="sap-icon://delete" tooltip="{ggfText>removeAccount}" press=".onRemove" />
+        </OverflowToolbar>
+        <VBox class="ggfDetailFields">
+          <VBox>
+            <Label text="{ggfText>account}" labelFor="accountCode" required="true" />
+            <Input
+              id="accountCode"
+              value="{ggf>account}"
+              valueLiveUpdate="true"
+              liveChange=".onConfigurationEdit"
+            />
+          </VBox>
+          <VBox>
+            <Label text="{ggfText>name}" labelFor="accountName" required="true" />
+            <Input
+              id="accountName"
+              value="{ggf>name}"
+              valueLiveUpdate="true"
+              liveChange=".onConfigurationEdit"
+            />
+          </VBox>
+          <VBox>
+            <Label
+              text="{ggfText>classification}"
+              labelFor="accountClassification"
+              required="true"
+            />
+            <Select
+              id="accountClassification"
+              width="100%"
+              forceSelection="false"
+              selectedKey="{ggf>classificationId}"
+              items="{path: 'ggf>/config/classifications', templateShareable: false}"
+              change=".onConfigurationEdit"
+            >
+              <core:Item key="{ggf>id}" text="{ggf>name}" />
+            </Select>
+          </VBox>
+          <VBox>
+            <Label text="{ggfText>criterion}" labelFor="accountCriterion" required="true" />
+            <Select
+              id="accountCriterion"
+              width="100%"
+              forceSelection="false"
+              selectedKey="{ggf>criterion}"
+              items="{path: 'ggf>/criteria', templateShareable: false}"
+              change=".onConfigurationEdit"
+            >
+              <core:Item key="{ggf>key}" text="{ggf>name}" />
+            </Select>
+          </VBox>
+          <VBox>
+            <Label text="{ggfText>accountPercent}" labelFor="accountPercent" required="true" />
+            <Input id="accountPercent" value="{ggf>percent}" type="Number" valueLiveUpdate="true" liveChange=".onConfigurationEdit" />
+          </VBox>
+          <CheckBox
+            text="{ggfText>activeAccount}"
+            selected="{ggf>active}"
+            select=".onConfigurationEdit"
+          />
+        </VBox>
+      </VBox>
+      <MessageStrip
+        text="{ggfText>noSelection}"
+        showIcon="true"
+        visible="{= !${ggf>/accountsSelected} &amp;&amp; !${ggf>/narrow} }"
+        class="sapUiSmallMarginTop"
+      />
+    </HBox>
+    <Table
+      id="shares"
+      items="{ggf>/config/groupShares}"
+      autoPopinMode="true"
+      alternateRowColors="true"
+      class="ggfSection"
+    >
+      <headerToolbar>
+        <OverflowToolbar>
+          <Title text="{ggfText>shares}" level="H2" titleStyle="H5" />
+          <ToolbarSpacer />
+          <Button icon="sap-icon://add" tooltip="{ggfText>addGroup}" press=".onAddGroup" />
+        </OverflowToolbar>
+      </headerToolbar>
+      <columns>
+        <Column>
+          <Text text="{ggfText>account}" />
+        </Column>
+        <Column importance="High">
+          <Text text="{ggfText>group}" />
+        </Column>
+        <Column importance="High" width="7rem">
+          <Text text="{ggfText>percent}" />
+        </Column>
+        <Column width="3rem" importance="High" />
+        <Column><Text text="{ggfText>groupBasis}" /></Column>
+      </columns>
+      <items>
+        <ColumnListItem>
+          <cells>
+            <Select
+              width="100%"
+              forceSelection="false"
+              selectedKey="{ggf>account}"
+              items="{path: 'ggf>/config/accounts', templateShareable: false}"
+              change=".onConfigurationEdit"
+            >
+              <core:Item key="{ggf>account}" text="{ggf>account}" />
+            </Select>
+            <Select
+              width="100%"
+              forceSelection="false"
+              selectedKey="{ggf>group}"
+              items="{path: 'ggf>/resourceGroups', templateShareable: false}"
+              change=".onConfigurationEdit"
+            >
+              <core:Item key="{ggf>key}" text="{ggf>name}" />
+            </Select>
+            <Input value="{ggf>percent}" valueLiveUpdate="true" liveChange=".onConfigurationEdit" />
+            <Button icon="sap-icon://delete" tooltip="{ggfText>remove}" press=".onRemove" />
+            <Select selectedKey="{= ${ggf>basis} || 'HOURS' }" change=".onGroupBasisChange">
+              <core:Item key="HOURS" text="{ggfText>hours}" />
+              <core:Item key="RESOURCE_QUANTITY" text="{ggfText>resourceQuantity}" />
+              <core:Item key="RESOURCE_VALUE" text="{ggfText>resourceValue}" />
+            </Select>
+          </cells>
+        </ColumnListItem>
+      </items>
+    </Table>
+  </VBox>
+</core:FragmentDefinition>

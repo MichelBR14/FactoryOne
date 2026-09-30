@@ -55,7 +55,7 @@ export interface MetadataPlan {
   module: MetadataSet["module"];
   version: number;
   actions: MetadataAction[];
-  /** Campos que já existem com tipo/tamanho diferente do desejado. Não são alterados. */
+  /** Divergências de tipo/tamanho. Bloqueiam install(); plan() permite conferência sem escrever. */
   warnings: string[];
 }
 
@@ -63,6 +63,7 @@ export interface ExistingField {
   /** Tipo como o Service Layer devolve (`db_Alpha`). */
   type?: string;
   size?: number;
+  subType?: string;
 }
 
 export interface ExistingMetadata {
@@ -108,7 +109,8 @@ export function toUserObjectBody(
     TableName: full,
     ObjectType: OBJECT_TYPE[object.kind],
     CanFind: "tYES",
-    CanDelete: "tYES",
+    CanDelete: object.canDelete === false ? "tNO" : "tYES",
+    ...(object.applyAuthorization && { ApplyAuthorization: "tYES" }),
     CanCancel: "tNO",
     CanClose: "tNO",
     CanYearTransfer: "tNO",
@@ -127,9 +129,15 @@ export function toUserObjectBody(
 function divergence(full: string, field: FieldDef, existing: ExistingField): string | undefined {
   const wantedType = FIELD_TYPE[field.type];
   const where = `${full}.U_${field.name}`;
-  if (existing.type && existing.type !== wantedType) {
+  // SAP stores a Time UDF as db_Numeric/st_Time even when created with db_Date/st_Time.
+  const sapTime = field.type === "date" && field.subType === "time" &&
+    existing.type === "db_Numeric" && existing.subType === "st_Time";
+  if (existing.type && existing.type !== wantedType && !sapTime) {
     return `${where} já existe como ${existing.type} e o FactoreOne espera ${wantedType}; não foi alterado.`;
   }
+  if (field.subType && field.subType !== "none" && existing.subType &&
+      existing.subType !== FIELD_SUBTYPE[field.subType])
+    return `${where} já existe com subtipo ${existing.subType} e o FactoreOne espera ${FIELD_SUBTYPE[field.subType]}; não foi alterado.`;
   if (field.type === "alpha" && existing.size !== undefined && existing.size !== field.size) {
     return `${where} já existe com tamanho ${existing.size} e o FactoreOne espera ${field.size}; não foi alterado.`;
   }

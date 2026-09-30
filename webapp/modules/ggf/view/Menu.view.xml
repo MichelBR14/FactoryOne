@@ -1,0 +1,61 @@
+<mvc:View
+  controllerName="factoreone.app.modules.ggf.controller.Menu"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  displayBlock="true"
+>
+  <Page
+    id="ggfMenu"
+    title="{menu>/product}"
+    class="factoryMenuPage"
+    showNavButton="true"
+    navButtonTooltip="{i18n>backFactoryOne}"
+    navButtonPress=".onHome"
+  >
+    <content>
+      <VBox class="factoryMenuContent">
+        <Title text="{i18n>module_ggf}" level="H1" titleStyle="H2" />
+        <Text
+          text="{i18n>ggfDescription}"
+          class="sapUiTinyMarginTop sapUiSmallMarginBottom"
+        />
+        <MessageStrip
+          text="{i18n>developmentMode}"
+          type="Warning"
+          showIcon="true"
+          visible="{menu>/development}"
+        />
+        <MessageStrip
+          text="{i18n>integrationPending}"
+          type="Information"
+          showIcon="true"
+          visible="{= !${menu>/development} &amp;&amp; !${menu>/sapRead} }"
+        />
+        <MessageStrip
+          text="{i18n>sapReadMode}"
+          type="Warning"
+          showIcon="true"
+          visible="{menu>/sapRead}"
+        />
+        <FlexBox
+          id="ggfFunctions"
+          items="{menu>/functions}"
+          class="factoryTileGrid"
+          renderType="Div"
+        >
+          <GenericTile
+            header="{menu>name}"
+            subheader="{menu>status}"
+            pressEnabled="{menu>available}"
+            frameType="TwoByOne"
+            press=".onFunction"
+          >
+            <TileContent>
+              <ImageContent src="{menu>icon}" />
+            </TileContent>
+          </GenericTile>
+        </FlexBox>
+      </VBox>
+    </content>
+  </Page>
+</mvc:View>

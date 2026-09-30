@@ -2,7 +2,7 @@
 // O nome vem de product.ts (Node 24 lê TypeScript direto) e o subtítulo do i18n; nada é repetido à mão.
 import fs from "node:fs";
 import path from "node:path";
-import { PRODUCT_NAME } from "../webapp/core/config/product.ts";
+import { PRODUCT_DISPLAY_NAME } from "../webapp/core/config/product.ts";
 import { readModuleInfo } from "./module-info.mjs";
 
 function readProperty(file, key) {
@@ -24,7 +24,7 @@ if (!fs.existsSync(moduleDir)) {
 const config = {
   tiles: [
     {
-      text: PRODUCT_NAME,
+      text: PRODUCT_DISPLAY_NAME,
       enableTitleHeader: false,
       subtitle: readProperty("webapp/i18n/i18n.properties", "tileSubtitle"),
       linkmethod: "ExistingWindow",
@@ -35,5 +35,8 @@ const config = {
   ]
 };
 
-fs.writeFileSync(path.join(moduleDir, "WebClientExtension.json"), `${JSON.stringify(config, null, 2)}\n`);
+fs.writeFileSync(
+  path.join(moduleDir, "WebClientExtension.json"),
+  `${JSON.stringify(config, null, 2)}\n`
+);
 console.log(`WebClientExtension.json gerado em ${moduleDir}`);

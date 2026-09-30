@@ -147,6 +147,17 @@ describe("planMetadata", () => {
     expect(plan.warnings[1]).toMatch(/U_Status.*tamanho 30.*12/);
   });
 
+  it("aceita a normalização real db_Numeric/st_Time do SAP, mas não outro subtipo", () => {
+    const base=existing({fields:new Map([["FBO_GGF_RUN",new Map([
+      ["PostDate",{type:"db_Numeric",size:6,subType:"st_Time"}]
+    ])]])});
+    expect(planMetadata(set,base).warnings).toEqual([]);
+    const wrong=existing({fields:new Map([["FBO_GGF_RUN",new Map([
+      ["PostDate",{type:"db_Numeric",size:6,subType:"st_None"}]
+    ])]])});
+    expect(planMetadata(set,wrong).warnings).toHaveLength(1);
+  });
+
   it("nunca gera ação de exclusão ou alteração", () => {
     const kinds = new Set(planMetadata(set).actions.map((a) => a.kind));
     expect([...kinds].sort()).toEqual(["createField", "createObject", "createTable"]);
