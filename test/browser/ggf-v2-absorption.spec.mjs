@@ -29,7 +29,9 @@ const response = {
     orders: [{ orderNumber: "76", item: "C00003", itemDescription: "Produto", producedQuantity: "1", quantityUnit: "UN", standardModCents: "300000", standardGgfCents: "150000", modAdjustmentCents: "0", ggfAdjustmentCents: "-616600", totalAdjustmentCents: "-616600", originalCostCents: "550058", costAfterAbsorptionCents: "-66542", bases: [{ category: "GGF", criterion: "DIRECT_COST", group: "", base: "550058", totalBase: "571823", basisUnit: "SAP_LOCAL", basisDecimals: 2, participationPercent: "96.19", amountCents: "-616600", roundingMinor: "0", sourceRefs: ["203", "77/0"] }], directCostComponents: [] }]
   },
   stockConsumption: {
-    orders: [{ orderNumber: "76", item: "C00003", valuationMethod: "bis_MovingAverage", unit: "UN", quantityOnStock: 0,
+    orders: [{ orderNumber: "76", item: "C00003", producedQuantity: "1", ggfAdjustmentCents: "-616600", modAdjustmentCents: "0",
+      valuationMethod: "bis_MovingAverage", unit: "UN", quantityOnStock: 0,
+      accountingDetermination: { origin: "SAP_ADVANCED_GL_ACCOUNT_DETERMINATION", inventoryAccount: null, verified: false, refs: ["Items.GLMethod", "Warehouses.StockAccount"] },
       warehouses: [{ code: "01", quantity: 0, available: 0 }], status: "BLOCKED_AMBIGUOUS_TRACE",
       reason: "Saldo atual agregado; saídas posteriores não reconciliadas." }],
     fifoScenario: { origin: "sap", technicalOnly: true, status: "FIFO_PARTIALLY_CONSUMED", order: "83", item: "F1GGF26P01", unit: "UN",
@@ -37,6 +39,7 @@ const response = {
       receipt: { docEntry: 122, docNum: 77, line: 0, date: "2026-09-29", quantity: 10 },
       issues: [{ docEntry: 90, docNum: 40, line: 0, date: "2026-09-29", quantity: 6 }],
       calculation: { status: "STOCK_REVALUATION_CANDIDATE", totalStockCents: "4000", totalConsumedCents: "6000", reason: "Rastreio FIFO reconciliado; CPV pendente de regra." },
+      example: { ggfTotalMinor: "10000" },
       payload: null }
   }
 };
@@ -69,6 +72,13 @@ for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${widt
   await expect(page.getByText("R$ 40,00")).toBeVisible();
   await expect(page.getByText("R$ 60,00")).toBeVisible();
   await expect(page.getByText("Consumo sem classificação contábil")).toBeVisible();
+  await expect(page.getByText("6. Prévia Contábil")).toBeVisible();
+  await expect(page.getByText("Prévia técnica somente leitura. Não cria MaterialRevaluation nem Journal Entry.")).toBeVisible();
+  await page.getByText("A. Estoque · MaterialRevaluation").click();
+  await expect(page.getByText("Payload", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("null", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("SAP_ADVANCED_GL_ACCOUNT_DETERMINATION · não resolvida")).toBeVisible();
+  await expect(page.getByText("R$ -9.166,00").or(page.getByText("-R$ 9.166,00")).first()).toBeVisible();
   await expect(page.getByText("Tarifa atual sem histórico mensal comprovado.").first()).toBeVisible();
   await expect(page.locator("body")).not.toContainText("Dados fictícios locais");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

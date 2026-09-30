@@ -86,6 +86,17 @@ export async function readV2AbsorptionDistribution({ filter, mapping }) {
 
 async function readStockConsumptionReview(session, distribution) {
   const reviews = [];
+  let admin = null;
+  try {
+    const result = await session.get("CompanyService_GetAdminInfo");
+    if (result.ok) admin = result.data;
+  } catch { /* Determination remains unresolved if the company policy cannot be read. */ }
+  const warehouseRows = new Map();
+  const groupRows = new Map();
+  const safeRead = async path => {
+    try { const result = await session.get(path); return result.ok ? result.data : null; }
+    catch { return null; }
+  };
   for (const row of distribution.orders) {
     if (!/^[A-Za-z0-9._-]{1,50}$/.test(row.item)) {
       reviews.push({ orderNumber: row.orderNumber, item: row.item, status: "BLOCKED_AMBIGUOUS_TRACE",
@@ -93,7 +104,7 @@ async function readStockConsumptionReview(session, distribution) {
       continue;
     }
     const response = await session.get(
-      `Items('${row.item}')?$select=ItemCode,CostAccountingMethod,InventoryUOM,QuantityOnStock,ItemWarehouseInfoCollection,ManageBatchNumbers,ManageSerialNumbers`,
+      `Items('${row.item}')?$select=ItemCode,CostAccountingMethod,InventoryUOM,QuantityOnStock,ItemWarehouseInfoCollection,ManageBatchNumbers,ManageSerialNumbers,GLMethod,ItemsGroupCode`,
       { Prefer: "odata.maxpagesize=100" });
     if (!response.ok) {
       reviews.push({ orderNumber: row.orderNumber, item: row.item, status: "BLOCKED_AMBIGUOUS_TRACE",
@@ -108,13 +119,37 @@ async function readStockConsumptionReview(session, distribution) {
       available: warehouse.InStock == null || warehouse.Committed == null
         ? null : warehouse.InStock - warehouse.Committed
     }));
+    for (const warehouse of warehouses) if (!warehouseRows.has(warehouse.code))
+      warehouseRows.set(warehouse.code, await safeRead(`Warehouses('${warehouse.code}')?$select=WarehouseCode,StockAccount,IncreaseGLAccount,DecreaseGLAccount,PriceDifferencesAccount,VarianceAccount`));
+    if (item.ItemsGroupCode != null && !groupRows.has(String(item.ItemsGroupCode)))
+      groupRows.set(String(item.ItemsGroupCode), await safeRead(`ItemGroups(${item.ItemsGroupCode})?$select=Number,InventoryAccount,IncreaseGLAccount,DecreaseGLAccount,PriceDifferencesAccount,VarianceAccount`));
     const negative = Number(item.QuantityOnStock) < 0 || warehouses.some((warehouse) => Number(warehouse.quantity) < 0);
+    const advanced = admin?.EnableAdvancedGLAccountDetermination === "tYES";
+    const refs = ["CompanyService_GetAdminInfo:EnableAdvancedGLAccountDetermination", `Items('${row.item}'):GLMethod,ItemsGroupCode`];
+    let source = "SAP_DETERMINATION_UNRESOLVED";
+    if (item.GLMethod === "glm_WH") {
+      source = advanced ? "SAP_ADVANCED_GL_ACCOUNT_DETERMINATION" : "SAP_WAREHOUSE";
+      for (const warehouse of warehouses) refs.push(`Warehouses('${warehouse.code}'):StockAccount`);
+    } else if (item.GLMethod === "glm_ItemGroup") {
+      source = advanced ? "SAP_ADVANCED_GL_ACCOUNT_DETERMINATION" : "SAP_ITEM_GROUP";
+      refs.push(`ItemGroups(${item.ItemsGroupCode}):InventoryAccount`);
+    }
     reviews.push({
       orderNumber: row.orderNumber, item: row.item, producedQuantity: row.producedQuantity,
       modAdjustmentCents: row.modAdjustmentCents.toString(), ggfAdjustmentCents: row.ggfAdjustmentCents.toString(),
       valuationMethod: item.CostAccountingMethod ?? null,
       unit: item.InventoryUOM ?? null, quantityOnStock: item.QuantityOnStock ?? null,
       manageBatches: item.ManageBatchNumbers ?? null, manageSerials: item.ManageSerialNumbers ?? null,
+      glMethod: item.GLMethod ?? null, advancedGlDetermination: admin?.EnableAdvancedGLAccountDetermination ?? null,
+      accountingDetermination: { inventoryAccount: null, origin: source, verified: false, refs,
+        warehouseCandidates: warehouses.map(warehouse => ({ code: warehouse.code,
+          inventoryAccount: warehouseRows.get(warehouse.code)?.StockAccount ?? null,
+          increaseAccount: warehouseRows.get(warehouse.code)?.IncreaseGLAccount ?? null,
+          decreaseAccount: warehouseRows.get(warehouse.code)?.DecreaseGLAccount ?? null })),
+        itemGroup: item.ItemsGroupCode == null ? null : { code: item.ItemsGroupCode,
+          inventoryAccount: groupRows.get(String(item.ItemsGroupCode))?.InventoryAccount ?? null,
+          increaseAccount: groupRows.get(String(item.ItemsGroupCode))?.IncreaseGLAccount ?? null,
+          decreaseAccount: groupRows.get(String(item.ItemsGroupCode))?.DecreaseGLAccount ?? null } },
       warehouses, status: negative ? "BLOCKED_STOCK_NEGATIVE" : "BLOCKED_AMBIGUOUS_TRACE",
       reason: negative
         ? "Saldo negativo do item ou de depósito; não é possível atribuir a quantidade à OP."

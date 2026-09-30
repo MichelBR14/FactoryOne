@@ -46,7 +46,7 @@ export async function readTechnicalFifoPreview(session,previewFifoProduction,spl
     split.status==="STOCK_REVALUATION_CANDIDATE"&&split.totalStockCents==="4000"&&
     split.totalConsumedCents==="6000"&&split.payload===null,"Technical FIFO preview changed");
   return {origin:"sap",technicalOnly:true,scenario:"F1FOP2609291",capturedAt:new Date().toISOString(),
-    order:"83",item:item.ItemCode,itemName:item.ItemName,warehouse:"01",unit:"UN",
+    order:"83",item:item.ItemCode,itemName:item.ItemName,warehouse:"01",unit:"UN",valuationMethod:item.CostAccountingMethod,
     produced:preview.producedQuantity,originalLayerQuantity:"10",consumed:preview.consumedQuantity,
     remaining:preview.openQuantity,status:preview.status,receipt:{docEntry:122,docNum:77,line:0,
       date:receipt.DocDate,quantity:receiptLine.InventoryQuantity},
