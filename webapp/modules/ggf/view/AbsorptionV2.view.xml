@@ -2,6 +2,7 @@
   controllerName="factoreone.app.modules.ggf.controller.AbsorptionV2"
   xmlns:mvc="sap.ui.core.mvc"
   xmlns="sap.m"
+  xmlns:core="sap.ui.core"
   displayBlock="true"
 >
   <Page title="{ggfText>ggfV2Title}" showNavButton="true" navButtonPress=".onBack" navButtonTooltip="{ggfText>ggfV2Back}">
@@ -20,6 +21,26 @@
         <Title text="{ggfText>ggfV2Mapping}" level="H2" titleStyle="H4" class="sapUiMediumMarginTop" />
         <Text text="{ggfText>ggfV2MappingHint}" class="sapUiTinyMarginBottom" />
         <TextArea value="{v2>/mapping}" rows="8" growing="true" growingMaxLines="14" width="100%" valueLiveUpdate="false" change=".onMappingChange" />
+        <Title text="Distribuição do valor ainda não absorvido" level="H2" titleStyle="H4" class="sapUiMediumMarginTop" />
+        <MessageStrip text="MOD e GGF são calculados separadamente. Esta simulação técnica não é uma regra funcional aprovada e não contabiliza no SAP." type="Warning" showIcon="true" class="sapUiTinyMarginBottom" />
+        <HBox wrap="Wrap" class="sapUiSmallMarginBottom">
+          <VBox class="sapUiSmallMarginEnd sapUiSmallMarginTop">
+            <Title text="MOD" level="H3" titleStyle="H5" />
+            <Label text="Critério de rateio"/><Select selectedKey="{v2>/modCriterion}" width="18rem"><items>
+              <core:Item key="DIRECT_COST" text="Absorção por Custo Direto"/><core:Item key="QUANTITY" text="Quantidade Produzida"/><core:Item key="HOURS" text="Horas Apontadas"/><core:Item key="RESOURCE_GROUP" text="Distribuição por Grupo de Recurso"/>
+            </items></Select>
+            <Label text="OPs elegíveis (separadas por vírgula)" class="sapUiTinyMarginTop"/><Input value="{v2>/modOrders}" width="18rem"/>
+            <Label text="Percentuais dos grupos MOD (JSON; soma 100%)" class="sapUiTinyMarginTop"/><TextArea value="{v2>/modGroupShares}" rows="3" growing="true" width="100%" placeholder='[{"group":"&lt;código SAP&gt;","percent":"20","basis":"RESOURCE_VALUE"}]'/>
+          </VBox>
+          <VBox class="sapUiSmallMarginEnd sapUiSmallMarginTop">
+            <Title text="GGF" level="H3" titleStyle="H5" />
+            <Label text="Critério de rateio"/><Select selectedKey="{v2>/ggfCriterion}" width="18rem"><items>
+              <core:Item key="DIRECT_COST" text="Absorção por Custo Direto"/><core:Item key="QUANTITY" text="Quantidade Produzida"/><core:Item key="HOURS" text="Horas Apontadas"/><core:Item key="RESOURCE_GROUP" text="Distribuição por Grupo de Recurso"/>
+            </items></Select>
+            <Label text="OPs elegíveis (separadas por vírgula)" class="sapUiTinyMarginTop"/><Input value="{v2>/ggfOrders}" width="18rem"/>
+            <Label text="Percentuais dos grupos GGF (JSON; soma 100%)" class="sapUiTinyMarginTop"/><TextArea value="{v2>/ggfGroupShares}" rows="3" growing="true" width="100%" placeholder='[{"group":"&lt;código SAP&gt;","percent":"20","basis":"RESOURCE_VALUE"}]'/>
+          </VBox>
+        </HBox>
         <MessageStrip text="{ggfText>ggfV2NoData}" type="Information" showIcon="true" visible="{= !${v2>/hasResult} }" class="sapUiMediumMarginTop" />
         <VBox visible="{v2>/hasResult}" class="sapUiMediumMarginTop">
           <Title text="{ggfText>ggfV2Real} / {ggfText>ggfV2Absorbed} / {ggfText>ggfV2Difference}" level="H2" titleStyle="H4" />
@@ -35,6 +56,20 @@
               </HBox>
             </CustomListItem>
           </List>
+          <Title text="Rateio do saldo por absorver" level="H2" titleStyle="H4" class="sapUiMediumMarginTop" />
+          <MessageStrip text="A soma distribuída pode diferir do valor total quando alguma categoria estiver bloqueada. Diferença não distribuída permanece explícita." type="Information" showIcon="true" />
+          <Table items="{v2>/distributionCategories}" growing="true">
+            <columns><Column><Text text="Categoria"/></Column><Column><Text text="Critério"/></Column><Column><Text text="Status"/></Column><Column hAlign="End"><Text text="A distribuir"/></Column><Column hAlign="End"><Text text="Distribuído"/></Column><Column hAlign="End"><Text text="Diferença"/></Column></columns>
+            <items><ColumnListItem><cells><Text text="{v2>category}"/><Text text="{v2>criterion}"/><ObjectStatus text="{v2>statusText}" state="{= ${v2>residualCents} === '0' ? 'Success' : 'Warning' }"/><Text text="{v2>difference}"/><Text text="{v2>allocated}"/><Text text="{v2>residual}"/></cells></ColumnListItem></items>
+          </Table>
+          <Title text="Distribuição por OP / produto" level="H2" titleStyle="H4" class="sapUiMediumMarginTop" />
+          <Table items="{v2>/distributionOrders}" growing="true" growingScrollToLoad="true" minScreenWidth="Tablet" demandPopin="true">
+            <columns><Column><Text text="OP / produto"/></Column><Column hAlign="End"><Text text="MOD padrão"/></Column><Column hAlign="End"><Text text="GGF padrão"/></Column><Column hAlign="End"><Text text="MOD ajuste"/></Column><Column hAlign="End"><Text text="GGF ajuste"/></Column><Column hAlign="End"><Text text="Total ajuste"/></Column><Column hAlign="End"><Text text="Custo base técnico"/></Column><Column hAlign="End"><Text text="Após ajuste"/></Column><Column><Text text="Memória e origem"/></Column></columns>
+            <items><ColumnListItem><cells><ObjectIdentifier title="OP {v2>orderNumber} · {v2>item}" text="{v2>itemDescription} · {v2>producedQuantity} {v2>quantityUnit}"/><Text text="{v2>standardMod}"/><Text text="{v2>standardGgf}"/><Text text="{v2>mod}"/><Text text="{v2>ggf}"/><ObjectStatus text="{v2>total}"/><Text text="{v2>originalCost}"/><Text text="{v2>costAfter}"/><Text text="{v2>baseText}" wrapping="true"/></cells></ColumnListItem></items>
+          </Table>
+          <Title text="Conciliação do rateio" level="H3" titleStyle="H5" class="sapUiMediumMarginTop" />
+          <HBox wrap="Wrap" justifyContent="SpaceBetween"><ObjectStatus title="Diferença a distribuir" text="{v2>/distributionTotals/difference}"/><ObjectStatus title="Total distribuído" text="{v2>/distributionTotals/allocated}"/><ObjectStatus title="Saldo não distribuído" text="{v2>/distributionTotals/residual}" state="{= ${v2>/distribution/residualCents} === '0' ? 'Success' : 'Warning' }"/></HBox>
+          <List items="{v2>/distributionWarnings}" visible="{= ${v2>/distributionWarnings}.length > 0 }"><StandardListItem title="{v2>text}" icon="sap-icon://message-warning"/></List>
           <Title text="{ggfText>ggfV2Entries}" level="H2" titleStyle="H4" class="sapUiMediumMarginTop" />
           <Table items="{v2>/entries}" growing="true" growingScrollToLoad="true">
             <columns><Column><Text text="Conta"/></Column><Column><Text text="TransId / doc"/></Column><Column><Text text="Data"/></Column><Column hAlign="End"><Text text="Débito"/></Column><Column hAlign="End"><Text text="Crédito"/></Column><Column><Text text="Filial / dimensões"/></Column></columns>

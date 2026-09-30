@@ -1,3 +1,5 @@
+import type { Criterion, GroupBasis } from "../engine/types";
+
 export type AbsorptionCategory = "MOD" | "GGF";
 
 export interface AbsorptionAccountMapping {
@@ -11,11 +13,19 @@ export interface AbsorptionResourceMapping {
   category: AbsorptionCategory;
 }
 
+export interface AbsorptionDistributionSetting {
+  criterion: Criterion;
+  /** Explicit SAP production-order numbers eligible for this category. */
+  orderNumbers: string[];
+  groupShares?: Array<{ group: string; percent: string; basis?: GroupBasis }>;
+}
+
 export interface AbsorptionMapping {
   accounts: AbsorptionAccountMapping[];
   resources: AbsorptionResourceMapping[];
   /** True only for explicitly labeled technical homologation, never functional approval. */
   technicalHomologation: boolean;
+  distribution?: Partial<Record<AbsorptionCategory, AbsorptionDistributionSetting>>;
 }
 
 export interface AbsorptionFilter {

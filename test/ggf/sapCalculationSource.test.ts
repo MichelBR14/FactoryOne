@@ -5,6 +5,9 @@ import type { Configuration, Criterion } from "../../webapp/modules/ggf/engine/t
 import type { GgfReadClient } from "../../webapp/modules/ggf/repository/MappedGgfSource";
 import { ClosingSession } from "../../webapp/modules/ggf/service/ClosingSession";
 import { readFileSync } from "node:fs";
+import { calculateAbsorptionDistribution } from "../../webapp/modules/ggf/absorption/distribution";
+import { reconcileAbsorption } from "../../webapp/modules/ggf/absorption/reconciliation";
+import type { AbsorptionMapping, AbsorptionSourceData } from "../../webapp/modules/ggf/absorption/types";
 
 const filter = { start: "2026-09-01", end: "2026-09-30", branch: "", costCenter: "" };
 const config = (criterion: Criterion = "DIRECT_COST"): Configuration => ({
@@ -263,5 +266,73 @@ describe("narrow SAP calculation mapping with controlled responses", () => {
     );
     expect(script).toContain("openReadSession()");
     expect(script).toMatch(/finally\s*\{\s*await connection\.close\(\)/);
+  });
+});
+
+describe("V2 absorption distribution reusing the approved allocation engine", () => {
+  const absorptionData = (): AbsorptionSourceData => ({
+    company: "SBODEMOBR2",
+    filter: { start: filter.start, end: filter.end, branch: "", dimensions: ["", "", "", "", ""] },
+    accounts: [{ code: "TEST-GGF", name: "Technical only" }, { code: "TEST-MOD", name: "Technical only" }],
+    journals: [
+      { account: "TEST-GGF", debitCents: 10000n, creditCents: 0n, branch: "", dimensions: ["", "", "", "", ""], referenceDate: filter.start, transId: "1", document: "JE 1", lineId: "0" },
+      { account: "TEST-MOD", debitCents: 0n, creditCents: 1000n, branch: "", dimensions: ["", "", "", "", ""], referenceDate: filter.start, transId: "2", document: "JE 2", lineId: "0" }
+    ],
+    resources: [{ resource: "TEST-R", description: "Resource", type: "rtLabor", unit: "cycles", components: [{ component: 1, unitCostCents: 3000n }, { component: 2, unitCostCents: 1000n }], evidence: "current SAP resource master; period history not proven" }],
+    movements: [203, 204, 206].map((entry, index) => ({ resource: "TEST-R", order: String(index + 1), orderEntry: String(entry), producedItem: entry === 203 ? "TEST-A" : "TEST-B", itemDescription: "Test product", plannedQuantity: "1", completedQuantity: "1", quantityMicros: 1000000n, unit: "cycles", lineTotalCents: 4000n, direction: "ISSUE" as const, document: String(20 + index), docEntry: String(10 + index), lineId: "0", date: filter.start, sourceAccount: "" })),
+    orders: [203, 204, 206].map((entry, index) => ({ entry: String(entry), number: String(index + 1), item: entry === 203 ? "TEST-A" : "TEST-B", itemDescription: "Test product", plannedQuantity: "1", completedQuantity: "1", unit: "UN" })),
+    completeness: [], capturedAt: "2026-09-30T00:00:00.000Z"
+  });
+  const absorptionMapping = (modCriterion: Criterion = "DIRECT_COST", ggfCriterion: Criterion = "DIRECT_COST"): AbsorptionMapping => ({
+    accounts: [{ account: "TEST-MOD", category: "MOD" }, { account: "TEST-GGF", category: "GGF" }],
+    resources: [{ resource: "TEST-R", component: 1, category: "MOD" }, { resource: "TEST-R", component: 2, category: "GGF" }],
+    technicalHomologation: true,
+    distribution: {
+      MOD: { criterion: modCriterion, orderNumbers: ["1", "2", "3"] },
+      GGF: { criterion: ggfCriterion, orderNumbers: ["1", "2", "3"] }
+    }
+  });
+  function preparedClient() {
+    const f = fixture();
+    f.rows.ChartOfAccounts!.push({ Code: "TEST-MOD", Name: "Test only" });
+    f.rows.JournalEntries![0]!.JournalEntryLines.push({ Line_ID: 1, AccountCode: "TEST-MOD", Debit: 0, Credit: 10 });
+    return f.client;
+  }
+
+  it("distributes MOD and GGF independently and preserves negative over-absorption", async () => {
+    const source = absorptionData(), mapping = absorptionMapping();
+    const report = reconcileAbsorption(source, mapping);
+    const result = await calculateAbsorptionDistribution(preparedClient(), source, report, source.filter, mapping);
+    expect(result.categories.map((row) => [row.category, row.differenceCents, row.allocatedCents, row.residualCents])).toEqual([
+      ["MOD", -10000n, -10000n, 0n], ["GGF", 7000n, 7000n, 0n]
+    ]);
+    expect(result.orders.reduce((sum, row) => sum + row.modAdjustmentCents, 0n)).toBe(-10000n);
+    expect(result.orders.reduce((sum, row) => sum + row.ggfAdjustmentCents, 0n)).toBe(7000n);
+    expect(result.orders.every((row) => row.bases.some((base) => base.category === "MOD") && row.bases.some((base) => base.category === "GGF"))).toBe(true);
+    expect(result.residualCents).toBe(0n);
+  });
+
+  it("blocks only the category without actual hours while direct cost remains calculable", async () => {
+    const source = absorptionData(), mapping = absorptionMapping("HOURS", "DIRECT_COST");
+    const result = await calculateAbsorptionDistribution(preparedClient(), source, reconcileAbsorption(source, mapping), source.filter, mapping);
+    expect(result.categories[0]?.status).toBe("BLOCKED_BASIS");
+    expect(result.categories[0]?.blocker).toContain("hours");
+    expect(result.categories[1]?.status).toBe("CALCULATED_TECHNICAL");
+    expect(result.residualCents).toBe(-10000n);
+  });
+
+  it("blocks QUANTITY for mixed products instead of summing unlike items", async () => {
+    const source = absorptionData(), mapping = absorptionMapping("DIRECT_COST", "QUANTITY");
+    const result = await calculateAbsorptionDistribution(preparedClient(), source, reconcileAbsorption(source, mapping), source.filter, mapping);
+    expect(result.categories.find((row) => row.category === "GGF")?.status).toBe("BLOCKED_INCOMPATIBLE_BASIS");
+    expect(result.categories.find((row) => row.category === "MOD")?.status).toBe("CALCULATED_TECHNICAL");
+  });
+
+  it("leaves a category blocked when no real account is configured", async () => {
+    const source = absorptionData();
+    const mapping = { ...absorptionMapping(), accounts: [{ account: "TEST-GGF", category: "GGF" as const }] };
+    const result = await calculateAbsorptionDistribution(preparedClient(), source, reconcileAbsorption(source, mapping), source.filter, mapping);
+    expect(result.categories.find((row) => row.category === "MOD")?.status).toBe("BLOCKED_NO_ACCOUNT");
+    expect(result.categories.find((row) => row.category === "MOD")?.allocation).toBeUndefined();
   });
 });

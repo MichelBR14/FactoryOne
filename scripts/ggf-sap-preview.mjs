@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readClosingIntegrity, readSap, readV2Absorption, SapMetadataUnavailableError } from "./ggf-sap-runtime.mjs";
+import { readClosingIntegrity, readSap, readV2Absorption, readV2AbsorptionDistribution, SapMetadataUnavailableError } from "./ggf-sap-runtime.mjs";
 
 const port = Number(process.env.FBO_PREVIEW_PORT ?? 8082);
 const ui5Port = Number(process.env.FBO_UI5_PORT ?? 8081);
@@ -19,7 +19,7 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${host}`);
   if (!["GET", "HEAD"].includes(request.method)) return reply(405, { error: "Read only" });
   if (url.pathname.startsWith("/__ggf/")) {
-    if (!["/__ggf/read", "/__ggf/closing-integrity", "/__ggf/v2/absorption"].includes(url.pathname) || request.method !== "GET")
+    if (!["/__ggf/read", "/__ggf/closing-integrity", "/__ggf/v2/absorption", "/__ggf/v2/distribution"].includes(url.pathname) || request.method !== "GET")
       return reply(404, { error: "Unknown read" });
     if (
       request.headers["x-factoryone-read"] !== "1" ||
@@ -45,7 +45,7 @@ const server = createServer(async (request, response) => {
       } finally { reading = false; }
       return;
     }
-    if (url.pathname === "/__ggf/v2/absorption") {
+    if (["/__ggf/v2/absorption", "/__ggf/v2/distribution"].includes(url.pathname)) {
       const allowed = ["start", "end", "branch", "dim1", "dim2", "dim3", "dim4", "dim5", "mapping"];
       if ([...url.searchParams.keys()].some((key) => !allowed.includes(key)) ||
           ["start", "end", "mapping"].some((key) => url.searchParams.getAll(key).length !== 1) ||
@@ -68,10 +68,26 @@ const server = createServer(async (request, response) => {
           mapping.accounts.some((row) => !row || !/^[A-Za-z0-9._-]{1,30}$/.test(row.account) || !["MOD", "GGF"].includes(row.category)) ||
           mapping.resources.some((row) => !row || !/^[A-Za-z0-9._-]{1,30}$/.test(row.resource) || !Number.isInteger(row.component) || row.component < 1 || row.component > 10 || !["MOD", "GGF"].includes(row.category)))
         return reply(400, { error: "Invalid technical mapping" });
+      if (url.pathname === "/__ggf/v2/distribution") {
+        const settings = mapping.distribution ?? {};
+        if (!settings || typeof settings !== "object" || Array.isArray(settings) ||
+            Object.keys(settings).some((category) => !["MOD", "GGF"].includes(category)) ||
+            Object.values(settings).some((setting) => !setting ||
+              !["DIRECT_COST", "QUANTITY", "HOURS", "RESOURCE_GROUP"].includes(setting.criterion) ||
+              !Array.isArray(setting.orderNumbers) || setting.orderNumbers.length > 20 ||
+              setting.orderNumbers.some((number) => !/^\d{1,10}$/.test(number)) ||
+              !Array.isArray(setting.groupShares ?? []) || (setting.groupShares ?? []).length > 20 ||
+              (setting.groupShares ?? []).some((share) => !share ||
+                !/^[A-Za-z0-9._-]{1,30}$/.test(share.group) ||
+                typeof share.percent !== "string" || !/^\d+(?:\.\d{1,2})?$/.test(share.percent) ||
+                (share.basis !== undefined && !["HOURS", "RESOURCE_QUANTITY", "RESOURCE_VALUE"].includes(share.basis)))))
+          return reply(400, { error: "Invalid category distribution settings" });
+      }
       if (reading) return reply(409, { error: "A SAP read is already running" });
       reading = true;
       try {
-        const result = await readV2Absorption({
+        const read = url.pathname === "/__ggf/v2/distribution" ? readV2AbsorptionDistribution : readV2Absorption;
+        const result = await read({
           filter: {
             start: url.searchParams.get("start"),
             end: url.searchParams.get("end"),

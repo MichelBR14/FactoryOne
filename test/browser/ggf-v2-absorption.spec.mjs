@@ -17,6 +17,16 @@ const response = {
     statuses: ["Homologação técnica", "Base indisponível"],
     completeness: [{ source: "JournalEntries", received: 90, expected: 90, control: "count" }],
     blockers: ["Tarifa atual sem histórico mensal comprovado."]
+  },
+  distribution: {
+    technicalHomologation: true,
+    totalDifferenceCents: "-916600", totalAllocatedCents: "-616600", residualCents: "-300000",
+    warnings: ["Tarifa atual sem histórico mensal comprovado."],
+    categories: [
+      { category: "MOD", criterion: "DIRECT_COST", status: "BLOCKED_NO_ACCOUNT", differenceCents: "-300000", allocatedCents: "0", residualCents: "-300000", blocker: "Nenhuma conta real foi mapeada explicitamente para MOD." },
+      { category: "GGF", criterion: "DIRECT_COST", status: "CALCULATED_TECHNICAL", differenceCents: "-616600", allocatedCents: "-616600", residualCents: "0", blocker: "" }
+    ],
+    orders: [{ orderNumber: "76", item: "C00003", itemDescription: "Produto", producedQuantity: "1", quantityUnit: "UN", standardModCents: "300000", standardGgfCents: "150000", modAdjustmentCents: "0", ggfAdjustmentCents: "-616600", totalAdjustmentCents: "-616600", originalCostCents: "550058", costAfterAbsorptionCents: "-66542", bases: [{ category: "GGF", criterion: "DIRECT_COST", group: "", base: "550058", totalBase: "571823", basisUnit: "SAP_LOCAL", basisDecimals: 2, participationPercent: "96.19", amountCents: "-616600", roundingMinor: "0", sourceRefs: ["203", "77/0"] }], directCostComponents: [] }]
   }
 };
 
@@ -24,7 +34,7 @@ for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${widt
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.setViewportSize({ width, height: 900 });
-  await page.route("**/__ggf/v2/absorption?*", (route) => {
+  await page.route("**/__ggf/v2/distribution?*", (route) => {
     expect(route.request().method()).toBe("GET");
     expect(route.request().headers()["x-factoryone-read"]).toBe("1");
     return route.fulfill({ json: response });
@@ -32,7 +42,7 @@ for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${widt
   await page.goto("/index.html?mode=development&source=sap-read#/ggf/fechamento");
   await page.getByRole("button", { name: "GGF V2 / Apuração" }).click();
   await expect(page).toHaveURL(/#\/ggf\/v2\/apuracao$/);
-  await page.locator("textarea").fill(JSON.stringify({
+  await page.locator("textarea").first().fill(JSON.stringify({
     accounts: [{ account: "4.01.01.04.07", category: "GGF" }],
     resources: [{ resource: "R300007", component: 1, category: "MOD" }, { resource: "R300007", component: 2, category: "GGF" }],
     technicalHomologation: true
@@ -41,7 +51,7 @@ for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${widt
   await expect(page.getByText("Homologação técnica", { exact: true })).toBeVisible();
   await expect(page.getByText("R$ -4.666,00").or(page.getByText("-R$ 4.666,00"))).toBeVisible();
   await expect(page.getByText("Conta técnica")).toBeVisible();
-  await expect(page.getByText("Tarifa atual sem histórico mensal comprovado.")).toBeVisible();
+  await expect(page.getByText("Tarifa atual sem histórico mensal comprovado.").first()).toBeVisible();
   await expect(page.locator("body")).not.toContainText("Dados fictícios locais");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole("button", { name: "Voltar ao menu GGF" }).last().click();
