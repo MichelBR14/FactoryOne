@@ -177,6 +177,11 @@ export default class Closing extends Controller {
   public onHome(): void {
     (this.getOwnerComponent() as UIComponent).getRouter().navTo("ggf");
   }
+
+  public onOpenV2Absorption(): void {
+    if (!isDevelopmentMode()) return;
+    (this.getOwnerComponent() as UIComponent).getRouter().navTo("ggfV2Absorption");
+  }
   private onFunctionMatched(event: Route$PatternMatchedEvent): void {
     const name = event.getParameter("name") as keyof typeof FUNCTION_ROUTES;
     this.model.setProperty("/workspace", FUNCTION_ROUTES[name]);

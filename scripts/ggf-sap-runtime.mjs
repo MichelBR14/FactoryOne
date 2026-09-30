@@ -14,6 +14,12 @@ await build({
   bundle: true
 });
 const { inspectSapB1 } = await import(pathToFileURL(resolve(output)).href);
+const absorptionOutput = ".local/ggf/absorption-runtime.mjs";
+await build({ stdin: { contents: `
+export { readGgfV2Absorption } from "./webapp/modules/ggf/absorption/SapGgfAbsorptionSource.ts";
+export { reconcileAbsorption } from "./webapp/modules/ggf/absorption/reconciliation.ts";
+`, resolveDir: process.cwd() }, outfile: absorptionOutput, platform: "node", format: "esm", bundle: true });
+const { readGgfV2Absorption, reconcileAbsorption } = await import(pathToFileURL(resolve(absorptionOutput)).href);
 const integrityOutput = ".local/ggf/closing-integrity-runtime.mjs";
 await build({ stdin: { contents: `
 export { SapGgfClosingRepository } from "./webapp/modules/ggf/repository/SapGgfClosingRepository.ts";
@@ -38,6 +44,21 @@ export async function readSap(filter) {
   } finally {
     await session.close();
   }
+}
+
+export async function readV2Absorption({ filter, mapping }) {
+  const session = await openReadSession();
+  try {
+    const client = {
+      async get(path) {
+        const response = await session.get(path, { Prefer: "odata.maxpagesize=100" });
+        if (!response.ok) throw new Error(`SAP read rejected: HTTP ${response.status}`);
+        return response.data;
+      }
+    };
+    const source = await readGgfV2Absorption(client, session.info.company, filter, mapping);
+    return { source, report: reconcileAbsorption(source, mapping), connection: session.info };
+  } finally { await session.close(); }
 }
 
 export async function readClosingIntegrity(closingId) {

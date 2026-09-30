@@ -1,0 +1,61 @@
+<mvc:View
+  controllerName="factoreone.app.modules.ggf.controller.AbsorptionV2"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  displayBlock="true"
+>
+  <Page title="{ggfText>ggfV2Title}" showNavButton="true" navButtonPress=".onBack" navButtonTooltip="{ggfText>ggfV2Back}">
+    <content>
+      <VBox class="sapUiResponsiveContentPadding">
+        <MessageStrip text="{ggfText>ggfV2Technical}" type="Warning" showIcon="true" class="sapUiSmallMarginBottom" />
+        <MessageStrip text="{ggfText>ggfV2NeedSapRead}" type="Information" showIcon="true" visible="{= !${v2>/sapRead} }" class="sapUiSmallMarginBottom" />
+        <Title text="{ggfText>ggfV2Period}" level="H2" titleStyle="H4" />
+        <HBox wrap="Wrap" alignItems="End" class="sapUiSmallMarginBottom">
+          <VBox class="sapUiSmallMarginEnd sapUiSmallMarginTop"><Label text="{ggfText>ggfV2Start}"/><DatePicker value="{v2>/start}" valueFormat="yyyy-MM-dd" displayFormat="medium" width="12rem"/></VBox>
+          <VBox class="sapUiSmallMarginEnd sapUiSmallMarginTop"><Label text="{ggfText>ggfV2End}"/><DatePicker value="{v2>/end}" valueFormat="yyyy-MM-dd" displayFormat="medium" width="12rem"/></VBox>
+          <VBox class="sapUiSmallMarginEnd sapUiSmallMarginTop"><Label text="{ggfText>ggfV2Branch}"/><Input value="{v2>/branch}" width="10rem"/></VBox>
+          <VBox class="sapUiSmallMarginEnd sapUiSmallMarginTop"><Label text="{ggfText>ggfV2Dimensions}"/><HBox><Input value="{v2>/dimensions/0}" width="4rem"/><Input value="{v2>/dimensions/1}" width="4rem"/><Input value="{v2>/dimensions/2}" width="4rem"/><Input value="{v2>/dimensions/3}" width="4rem"/><Input value="{v2>/dimensions/4}" width="4rem"/></HBox></VBox>
+          <Button text="{ggfText>ggfV2Run}" type="Emphasized" icon="sap-icon://refresh" press=".onRun" busy="{v2>/busy}" enabled="{= ${v2>/sapRead} &amp;&amp; !${v2>/busy} }" class="sapUiSmallMarginTop" />
+        </HBox>
+        <Title text="{ggfText>ggfV2Mapping}" level="H2" titleStyle="H4" class="sapUiMediumMarginTop" />
+        <Text text="{ggfText>ggfV2MappingHint}" class="sapUiTinyMarginBottom" />
+        <TextArea value="{v2>/mapping}" rows="8" growing="true" growingMaxLines="14" width="100%" valueLiveUpdate="false" change=".onMappingChange" />
+        <MessageStrip text="{ggfText>ggfV2NoData}" type="Information" showIcon="true" visible="{= !${v2>/hasResult} }" class="sapUiMediumMarginTop" />
+        <VBox visible="{v2>/hasResult}" class="sapUiMediumMarginTop">
+          <Title text="{ggfText>ggfV2Real} / {ggfText>ggfV2Absorbed} / {ggfText>ggfV2Difference}" level="H2" titleStyle="H4" />
+          <MessageStrip text="{= ${v2>/report/technicalHomologation} ? 'Homologação técnica. Não representa regra funcional aprovada.' : '' }" type="Warning" showIcon="true" />
+          <FlexBox items="{v2>/statuses}" wrap="Wrap" class="sapUiTinyMarginTop sapUiTinyMarginBottom"><ObjectStatus text="{v2>text}" state="Warning" class="sapUiTinyMarginEnd"/></FlexBox>
+          <List items="{v2>/summary}" showSeparators="Inner">
+            <CustomListItem>
+              <HBox justifyContent="SpaceBetween" wrap="Wrap" class="sapUiSmallMargin">
+                <ObjectIdentifier title="{v2>category}" text="{v2>statusText}" />
+                <ObjectStatus title="{ggfText>ggfV2Real}" text="{v2>real}" />
+                <ObjectStatus title="{ggfText>ggfV2Absorbed}" text="{v2>absorbed}" />
+                <ObjectStatus title="{ggfText>ggfV2Difference}" text="{v2>difference}" state="{= ${v2>status} === 'CONCILIATED' ? 'Success' : 'Warning' }" />
+              </HBox>
+            </CustomListItem>
+          </List>
+          <Title text="{ggfText>ggfV2Entries}" level="H2" titleStyle="H4" class="sapUiMediumMarginTop" />
+          <Table items="{v2>/entries}" growing="true" growingScrollToLoad="true">
+            <columns><Column><Text text="Conta"/></Column><Column><Text text="TransId / doc"/></Column><Column><Text text="Data"/></Column><Column hAlign="End"><Text text="Débito"/></Column><Column hAlign="End"><Text text="Crédito"/></Column><Column><Text text="Filial / dimensões"/></Column></columns>
+            <items><ColumnListItem><cells><ObjectIdentifier title="{v2>account}" text="{v2>accountName}"/><Text text="{v2>transId} / {v2>document}"/><Text text="{v2>date}"/><Text text="{v2>debit}"/><Text text="{v2>credit}"/><Text text="{v2>branch} / {v2>dimensionsText}"/></cells></ColumnListItem></items>
+          </Table>
+          <Title text="{ggfText>ggfV2ResourceLines}" level="H2" titleStyle="H4" class="sapUiMediumMarginTop" />
+          <Table items="{v2>/resources}" growing="true" growingScrollToLoad="true">
+            <columns><Column><Text text="Recurso / OP"/></Column><Column><Text text="Componente"/></Column><Column hAlign="End"><Text text="Quantidade"/></Column><Column><Text text="Unidade"/></Column><Column hAlign="End"><Text text="Custo unitário"/></Column><Column hAlign="End"><Text text="Padrão"/></Column><Column hAlign="End"><Text text="LineTotal do mov. SAP (referência)"/></Column><Column><Text text="Documento / data"/></Column></columns>
+            <items><ColumnListItem><cells><ObjectIdentifier title="{v2>resource} / OP {v2>order}" text="{v2>producedItem} · {v2>itemDescription} · {v2>category}"/><Text text="Cost{v2>component}"/><Text text="{v2>quantity}"/><Text text="{v2>unit}"/><Text text="{v2>unitCost}"/><Text text="{v2>amount}"/><Text text="{v2>movementValue}"/><Text text="{v2>document} / {v2>date}"/></cells></ColumnListItem></items>
+          </Table>
+          <Title text="Cadastro atual dos recursos (tarifas sem histórico mensal)" level="H2" titleStyle="H4" class="sapUiMediumMarginTop" />
+          <Table items="{v2>/resourceCatalog}" growing="true" growingScrollToLoad="true">
+            <columns><Column><Text text="Recurso"/></Column><Column><Text text="Tipo"/></Column><Column><Text text="Unidade"/></Column><Column><Text text="Componentes CostN atuais"/></Column></columns>
+            <items><ColumnListItem><cells><ObjectIdentifier title="{v2>resource}" text="{v2>description}"/><Text text="{v2>type}"/><Text text="{v2>unit}"/><Text text="{v2>componentsText}"/></cells></ColumnListItem></items>
+          </Table>
+          <Title text="Fontes e completude" level="H2" titleStyle="H4" class="sapUiMediumMarginTop" />
+          <List items="{v2>/completeness}"><StandardListItem title="{v2>source}" description="Recebidas: {v2>received} · Controle SAP: {v2>expected} · {v2>control}"/></List>
+          <Text text="{v2>/evidence}" wrapping="true" class="sapUiSmallMarginTop" />
+          <List items="{v2>/blockers}"><StandardListItem title="{v2>text}" icon="sap-icon://message-warning"/></List>
+        </VBox>
+      </VBox>
+    </content>
+  </Page>
+</mvc:View>

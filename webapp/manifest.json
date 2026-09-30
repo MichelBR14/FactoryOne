@@ -5,14 +5,22 @@
     "type": "application",
     "i18n": {
       "bundleUrl": "i18n/i18n.properties",
-      "supportedLocales": ["", "en"],
+      "supportedLocales": [
+        "",
+        "en"
+      ],
       "fallbackLocale": ""
     },
     "applicationVersion": {
       "version": "0.1.0"
     },
     "title": "{{appTitle}}",
-    "description": "{{appDescription}}"
+    "description": "{{appDescription}}",
+    "sourceTemplate": {
+      "id": "@sap/ux-app-migrator:freestyle",
+      "version": "1.33.0",
+      "toolsId": "8c75c502-37e8-49c0-9b37-37d057fdfbc9"
+    }
   },
   "sap.ui": {
     "technology": "UI5",
@@ -42,8 +50,12 @@
     },
     "resources": {
       "css": [
-        { "uri": "modules/ggf/css/closing.css" },
-        { "uri": "css/navigation.css" }
+        {
+          "uri": "modules/ggf/css/closing.css"
+        },
+        {
+          "uri": "css/navigation.css"
+        }
       ]
     },
     "models": {
@@ -51,7 +63,10 @@
         "type": "sap.ui.model.resource.ResourceModel",
         "settings": {
           "bundleName": "factoreone.app.i18n.i18n",
-          "supportedLocales": ["", "en"],
+          "supportedLocales": [
+            "",
+            "en"
+          ],
           "fallbackLocale": ""
         }
       }
@@ -68,37 +83,61 @@
       },
       "routes": [
         {
+          "name": "ggfV2Absorption",
+          "pattern": "ggf/v2/apuracao",
+          "target": [
+            "ggfV2Absorption"
+          ]
+        },
+        {
           "name": "ggfRevaluation",
           "pattern": "ggf/reavaliacao",
-          "target": ["ggfRevaluation"]
+          "target": [
+            "ggfRevaluation"
+          ]
         },
         {
           "name": "ggfClosing",
           "pattern": "ggf/fechamento",
-          "target": ["ggfFunction"]
+          "target": [
+            "ggfFunction"
+          ]
         },
         {
           "name": "ggfClassifications",
           "pattern": "ggf/classificacao",
-          "target": ["ggfFunction"]
+          "target": [
+            "ggfFunction"
+          ]
         },
         {
           "name": "ggfAllocations",
           "pattern": "ggf/rateios",
-          "target": ["ggfFunction"]
+          "target": [
+            "ggfFunction"
+          ]
         },
         {
           "name": "ggf",
           "pattern": "ggf",
-          "target": ["ggf"]
+          "target": [
+            "ggf"
+          ]
         },
         {
           "name": "main",
           "pattern": "",
-          "target": ["main"]
+          "target": [
+            "main"
+          ]
         }
       ],
       "targets": {
+        "ggfV2Absorption": {
+          "id": "ggfV2Absorption",
+          "name": "AbsorptionV2",
+          "path": "factoreone.app.modules.ggf.view"
+        },
         "ggfRevaluation": {
           "id": "ggfRevaluation",
           "name": "Revaluation",

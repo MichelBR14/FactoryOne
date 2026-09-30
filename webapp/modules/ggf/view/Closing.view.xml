@@ -15,6 +15,14 @@
     showFooter="{ggf>/ready}"
     backgroundDesign="List"
   >
+    <headerContent>
+      <Button
+        text="{ggfText>ggfV2Shortcut}"
+        icon="sap-icon://accounting-document-verification"
+        press=".onOpenV2Absorption"
+        visible="{= ${ggf>/workspace} === 'closing' &amp;&amp; (${ggf>/development} || ${ggf>/sapRead}) }"
+      />
+    </headerContent>
     <content>
       <VBox class="ggfHeading">
         <Title
@@ -249,7 +257,11 @@
               icon="sap-icon://simulate"
               type="{= ${ggf>/calculated} ? 'Default' : 'Emphasized' }"
               press=".onCalculate"
-            />
+            >
+              <layoutData>
+                <OverflowToolbarLayoutData priority="NeverOverflow" />
+              </layoutData>
+            </Button>
             <ToolbarSpacer />
             <ObjectStatus
               text="{ggfText>pending}"

@@ -34,7 +34,7 @@ describe("FactoryOne navigation contract", () => {
     });
     expect(routing.targets.main.name).toBe("Home");
     expect(routing.targets.ggf.name).toBe("Menu");
-    for (const pattern of ["ggf/fechamento", "ggf/classificacao", "ggf/rateios"]) {
+    for (const pattern of ["ggf/fechamento", "ggf/classificacao", "ggf/rateios", "ggf/v2/apuracao"]) {
       expect(routing.routes.some((r: { pattern: string }) => r.pattern === pattern)).toBe(true);
     }
   });
