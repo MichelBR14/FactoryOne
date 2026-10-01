@@ -145,7 +145,7 @@ export class SapGgfPostingOrchestrationStore implements GgfPostingOrchestrationS
       throw new Error("Posted SAP document type/link differs from the bound closing basis");
     const next = { ...transitionClosing(current, target as ClosingStatus), postingHash: current.postingHash,
       lastError: input.error,
-      ...(documentLink?.documentType === "JournalEntry.CPV" ? {
+      ...(documentLink?.documentType === "JournalEntry.CPV" || documentLink?.documentType === "JournalEntry.Closing" ? {
         sapJournalEntryDocEntry: documentLink.docEntry, sapJournalEntryDocNum: documentLink.docNum,
         sapJournalTransId: documentLink.transId, postedAt: documentLink.postedAt
       } : documentLink ? {

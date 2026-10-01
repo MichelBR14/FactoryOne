@@ -23,7 +23,7 @@ export interface ClosingLine {
 }
 
 export interface PostingBasis {
-  documentType?: "MaterialRevaluation" | "JournalEntry.CPV";
+  documentType?: "MaterialRevaluation" | "JournalEntry.CPV" | "JournalEntry.Closing";
   postingPlanHash?: string;
   postingClosingVersion?: number;
   postingPlanVersion?: number;
@@ -109,7 +109,8 @@ export function assertClosingIdentity(closing: GgfClosing): void {
 }
 
 export function closingSapDocument(closing: GgfClosing): SapPostingLink | null {
-  if (closing.postingBasis?.documentType === "JournalEntry.CPV") {
+  if (closing.postingBasis?.documentType === "JournalEntry.CPV" ||
+      closing.postingBasis?.documentType === "JournalEntry.Closing") {
     const docEntry = closing.sapJournalEntryDocEntry ?? null;
     const docNum = closing.sapJournalEntryDocNum ?? null;
     return docEntry && docNum && closing.sapJournalTransId
@@ -136,7 +137,7 @@ function canonical(value: unknown): unknown {
 /** SHA-256 of functional input only; no timestamps, session data, or transport state. */
 export async function postingHash(input: PostingBasis): Promise<string> {
   if (!input.companyDB || !input.periodStart || !input.periodEnd || !input.accounts.length ||
-      !input.lines.length || !(input.documentType === "JournalEntry.CPV"
+      !input.lines.length || !(input.documentType === "JournalEntry.CPV" || input.documentType === "JournalEntry.Closing"
         ? Array.isArray(input.payload.JournalEntryLines) : Array.isArray(input.payload.MaterialRevaluationLines)) ||
       !(globalThis.crypto?.subtle)) throw new Error("Incomplete posting basis or SHA-256 unavailable");
   const keys = input.lines.map(l => `${l.account}/${l.orderId}/${l.item}/${l.warehouse}`);

@@ -182,6 +182,26 @@ async function assertReady(bundle: PersistedGgfPostingBundle, requestedClosingId
     }
   }
   if (plan.technicalOnly === true) {
+    if (plan.closingId.startsWith("TECH7D-")) {
+      const document = required[0];
+      const expected = [
+        { debitAccount: "5.04.01.01.05", creditAccount: "5.04.01.01.03", amountCents: "60" },
+        { debitAccount: "5.04.01.01.05", creditAccount: "5.04.01.01.04", amountCents: "40" }
+      ];
+      if (!/^TECH7D-20261001-[A-F0-9]{10}$/.test(plan.closingId) || plan.companyDB !== "SBODEMOBR2" ||
+          plan.periodStart !== "2026-10-01" || plan.periodEnd !== "2026-10-01" || plan.branch !== "1" ||
+          plan.currency !== "R$" || plan.documents.length !== 1 || required.length !== 1 ||
+          document?.type !== "JournalEntry.Closing" || document.totalCents !== "100" ||
+          document.currency !== "R$" || document.lines.length !== 2 ||
+          expected.some((line, index) => document.lines[index]?.debitAccount !== line.debitAccount ||
+            document.lines[index]?.creditAccount !== line.creditAccount ||
+            document.lines[index]?.amountCents !== line.amountCents || document.lines[index]?.dimensions.length !== 0) ||
+          plan.lines.length !== 2 || plan.totalGgf !== "60" || plan.totalMod !== "40" ||
+          plan.totalStock !== "0" || plan.totalCpv !== "0" || plan.totalBlocked !== "0" ||
+          plan.totalDifference !== "0" || plan.accountingDifference !== "0" || plan.blockers.length)
+        throw new Error("Technical closing Journal Entry plan is outside the approved R$ 1.00 GGF/MOD scenario");
+      return;
+    }
     if (!/^TECH7C-[A-Z0-9-]{8,22}$/.test(plan.closingId) || plan.companyDB !== "SBODEMOBR2" ||
         plan.periodStart !== "2026-10-01" || plan.periodEnd !== "2026-10-01" || plan.branch !== "1" ||
         plan.documents.length !== 1 || required.length !== 1 || required[0]?.type !== "JournalEntry.CPV" ||

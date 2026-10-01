@@ -66,7 +66,8 @@ function fromHeader(row: SapRow, lines: ClosingLine[]): GgfClosing {
   const postingBasis = row.U_PostingBasis ? JSON.parse(String(row.U_PostingBasis)) : null;
   const documentEntry = parseNumber(row.U_SapDocEntry);
   const documentNumber = parseNumber(row.U_SapDocNum);
-  const journalEntry = postingBasis?.documentType === "JournalEntry.CPV";
+  const journalEntry = postingBasis?.documentType === "JournalEntry.CPV" ||
+    postingBasis?.documentType === "JournalEntry.Closing";
   const c: GgfClosing = {
     closingId: row.Code, companyDB: String(row.U_CompanyDB), periodStart: String(row.U_PeriodStart),
     periodEnd: String(row.U_PeriodEnd), branch: String(row.U_Branch ?? ""),
@@ -110,7 +111,7 @@ export class SapGgfClosingRepository implements GgfClosingStore {
     private readonly context: { user?: string; session?: string; now?: () => string } = {}) {}
 
   private async verificationClaim(closingId: string, basis?: GgfClosing["postingBasis"]): Promise<{ hash: string; version: number } | null> {
-    if (basis?.documentType === "JournalEntry.CPV" && basis.postingPlanHash &&
+    if ((basis?.documentType === "JournalEntry.CPV" || basis?.documentType === "JournalEntry.Closing") && basis.postingPlanHash &&
         basis.postingClosingVersion && basis.postingPlanVersion) {
       const executionId = await calculateGgfExecutionId({ closingId, closingVersion: basis.postingClosingVersion,
         postingPlanVersion: basis.postingPlanVersion, postingHash: basis.postingPlanHash });
