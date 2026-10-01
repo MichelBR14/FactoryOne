@@ -26,12 +26,14 @@ O header `FBO_GGF_CLOSE` **nao e historico**: `PATCH` substitui `U_PostingBasis`
 ## Status e transicoes
 
 ```text
-DRAFT -> CALCULATED -> VALIDATED -> READY_TO_POST -> POSTING -> POSTED
+ DRAFT -> CALCULATED -> VALIDATED -> READY_TO_POST -> POSTING -> POSTED
                                  |                  |           |
                                  v                  v           v
-                             CALCULATED      POSTING_UNCERTAIN FAILED
-                                                   |              |
-                                            reconciliar -> POSTED  POSTING_UNCERTAIN
+                             CALCULATED       POSTING_PARTIAL FAILED
+                                                   |             |
+                                            reconciliar -> POSTED
+                                                   |
+                                            POSTING_UNCERTAIN
 ```
 
 `REOPENED` e `CANCELLED` existem, mas `POSTED -> REOPENED` nao estorna o documento SAP. Reabertura funcional exige um novo fechamento/versao e politica de estorno aprovada; nenhum envio automatico esta implementado. O registro inclui `ReopenedFrom`, `CancelledAt` e `Notes` para a futura trilha. `POSTING_UNCERTAIN` significa que **o POST pode ter criado o documento**. Ausencia em uma busca, por si so, nao autoriza repeticao.
@@ -39,6 +41,14 @@ DRAFT -> CALCULATED -> VALIDATED -> READY_TO_POST -> POSTING -> POSTED
 Antes do envio, o coordenador exige o fechamento persistido por `ClosingId`, `READY_TO_POST`, nenhum `DocEntry`, igualdade entre hash calculado e gravado, e igualdade com a base/payload persistidos. Em seguida cria `FBO_GGF_CLAIM(Code=ClosingId)`, grava `POSTING` com hash e payload, e so entao chama o transporte injetado. Esse transporte e apenas fake nos testes; nao ha instancia SAP de escrita no produto.
 
 Resposta SAP definitiva de rejeicao vira `FAILED`, preservando o hash e registrando so HTTP/codigo SAP. Timeout/rede ou resposta incompleta vira `POSTING_UNCERTAIN`, sem retry. Se o SAP respondeu com chaves mas a releitura falhou, as chaves sao guardadas e o estado continua incerto. `POSTED` requer releitura do documento e diario, correspondencia economica unica e persiste `DocEntry`, `DocNum`, `TransId`, `PostedAt`. `Reference1` nao participa da busca ou chave.
+
+## Fase 7: orquestracao do PostingPlan
+
+`GgfPostingOrchestrator` adiciona o fluxo de dominio multi-documento sem ligar um gateway SAP financeiro nem exibir acao de POST. Ele rejeita plano bloqueado, hash de releitura diferente, metadata ausente, integridade violada, fechamento nao pronto, diferenca contabil/total ou linha/conta incompleta antes de claim. A ordem usa `PostingPlan.documents[].order` e ignora documentos `NOT_REQUIRED`.
+
+O claim existente continua unico por `ClosingId`. Se ja existir, a chamada nao envia documento: apenas tenta reconciliar. `POSTING_PARTIAL` significa que pelo menos um documento foi conciliado e outro foi definitivamente rejeitado ou ainda nao foi enviado. `POSTING_UNCERTAIN` cobre timeout, resposta incompleta e reconciliacao indisponivel/ambigua. Documentos pendentes apos claim existente nunca sao enviados automaticamente.
+
+Os testes do orquestrador usam persistencia/gateway em memoria, nao SAP. O adapter SAP de execucao ainda precisa gravar o `PostingPlanVersion` associado ao claim e uma trilha append-only por documento; o schema atual guarda apenas uma ligacao simples para MaterialRevaluation e nao e suficiente para CPV/fechamento multi-documento. O plano persistido hoje na SBODEMOBR2 e `BLOCKED`; nao houve claim financeiro ou documento novo. A documentacao de arquitetura e limites da Fase 7 esta em [GGF-V2-POSTING-ORCHESTRATION.md](GGF-V2-POSTING-ORCHESTRATION.md).
 
 ## PostingHash
 

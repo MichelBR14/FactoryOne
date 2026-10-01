@@ -3,7 +3,7 @@ import type { FifoClosingTrace } from "./FifoProductionTrace";
 
 export const CLOSING_STATUSES = [
   "DRAFT", "CALCULATED", "VALIDATED", "READY_TO_POST", "POSTING",
-  "POSTING_UNCERTAIN", "POSTED", "FAILED", "REOPENED", "CANCELLED"
+  "POSTING_PARTIAL", "POSTING_UNCERTAIN", "POSTED", "FAILED", "REOPENED", "CANCELLED"
 ] as const;
 export type ClosingStatus = typeof CLOSING_STATUSES[number];
 
@@ -80,7 +80,8 @@ const transitions: Record<ClosingStatus, readonly ClosingStatus[]> = {
   CALCULATED: ["VALIDATED", "DRAFT", "CANCELLED"],
   VALIDATED: ["READY_TO_POST", "CALCULATED", "CANCELLED"],
   READY_TO_POST: ["POSTING", "POSTING_UNCERTAIN", "CALCULATED", "CANCELLED"],
-  POSTING: ["POSTED", "FAILED", "POSTING_UNCERTAIN"],
+  POSTING: ["POSTED", "POSTING_PARTIAL", "FAILED", "POSTING_UNCERTAIN"],
+  POSTING_PARTIAL: ["POSTED", "POSTING_UNCERTAIN"],
   POSTING_UNCERTAIN: ["POSTED", "FAILED"],
   POSTED: ["REOPENED"],
   FAILED: ["POSTING_UNCERTAIN", "CANCELLED"],
@@ -200,7 +201,7 @@ export async function assertClosingConsistency(closing: GgfClosing): Promise<voi
   const basis = closing.postingBasis;
   if (!basis) {
     if (closing.lines.length || closing.postingHash || closing.proposedPayload ||
-        ["READY_TO_POST","POSTING","POSTING_UNCERTAIN","POSTED","FAILED"].includes(closing.status))
+        ["READY_TO_POST","POSTING","POSTING_PARTIAL","POSTING_UNCERTAIN","POSTED","FAILED"].includes(closing.status))
       throw new Error("GGF closing has lines or hash without persisted posting basis");
     return;
   }

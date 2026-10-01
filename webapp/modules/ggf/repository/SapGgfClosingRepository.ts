@@ -235,7 +235,7 @@ export class SapGgfClosingRepository implements GgfClosingStore {
         next.version !== expected.version + 1) throw new Error("Closing identity/version mismatch");
     if (next.status !== expected.status) transitionClosing(expected, next.status);
     else if (next.status !== "POSTING_UNCERTAIN") throw new Error("Unchanged closing status cannot be rewritten");
-    if (["READY_TO_POST","POSTING","POSTING_UNCERTAIN","POSTED","FAILED"].includes(next.status) &&
+    if (["READY_TO_POST","POSTING","POSTING_PARTIAL","POSTING_UNCERTAIN","POSTED","FAILED"].includes(next.status) &&
         (!next.postingHash || !next.postingBasis || !next.proposedPayload))
       throw new Error("Posting state requires persisted hash, basis and payload");
     if (next.status === "POSTED" &&
@@ -249,7 +249,7 @@ export class SapGgfClosingRepository implements GgfClosingStore {
         next.sapMaterialRevaluationDocNum !== expected.sapMaterialRevaluationDocNum ||
         next.sapJournalTransId !== expected.sapJournalTransId))
       throw new Error("POSTED version is immutable; reopen without changing functional content");
-    if (["POSTING","POSTING_UNCERTAIN","POSTED","FAILED"].includes(expected.status) &&
+    if (["POSTING","POSTING_PARTIAL","POSTING_UNCERTAIN","POSTED","FAILED"].includes(expected.status) &&
         (next.postingHash !== expected.postingHash ||
          JSON.stringify(next.postingBasis) !== JSON.stringify(expected.postingBasis) ||
          JSON.stringify(next.proposedPayload) !== JSON.stringify(expected.proposedPayload)))
