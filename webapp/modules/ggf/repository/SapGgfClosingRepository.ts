@@ -1,8 +1,10 @@
 import type { SlReadWrite } from "../../../core/data/SetupRepository";
 import { tableName } from "../../../core/config/product";
 import { ServiceLayerError } from "../../../core/service/errors";
-import { CLOSING_STATUSES, assertClosingConsistency, assertClosingIdentity, transitionClosing, type ClosingLine, type GgfClosing } from "../service/GgfClosing";
+import { CLOSING_STATUSES, assertClosingConsistency, assertClosingIdentity, closingSapDocument,
+  transitionClosing, type ClosingLine, type GgfClosing } from "../service/GgfClosing";
 import { ClosingIntegrityViolation, inspectClosingIntegrity, safeIntegrityContext, type ClosingIntegrityReport } from "../service/GgfClosingIntegrity";
+import { calculateGgfExecutionId } from "../service/GgfPostingExecution";
 
 const CLOSE = tableName("ggf", "CLOSE");
 const LINE = tableName("ggf", "CLINE");
@@ -26,6 +28,7 @@ interface SapPage<T> { value: T[]; "@odata.nextLink"?: string; "odata.nextLink"?
 interface SapRow { Code: string; [key: string]: unknown }
 
 function headerBody(c: GgfClosing): Record<string, unknown> {
+  const sapDocument = closingSapDocument(c);
   return {
     Name: c.closingId, U_CompanyDB: c.companyDB, U_PeriodStart: c.periodStart,
     U_PeriodEnd: c.periodEnd, U_Branch: c.branch, U_Dimensions: JSON.stringify(c.dimensions),
@@ -34,8 +37,8 @@ function headerBody(c: GgfClosing): Record<string, unknown> {
     U_CalculatedAt: c.calculatedAt, U_PostedAt: c.postedAt,
     U_TotalGgf: c.totalGgf, U_TotalAllocated: c.totalAllocated,
     U_TotalRevalued: c.totalRevalued,
-    U_SapDocEntry: maybe(c.sapMaterialRevaluationDocEntry),
-    U_SapDocNum: maybe(c.sapMaterialRevaluationDocNum), U_SapTransId: maybe(c.sapJournalTransId),
+    U_SapDocEntry: maybe(sapDocument?.docEntry ?? null),
+    U_SapDocNum: maybe(sapDocument?.docNum ?? null), U_SapTransId: maybe(sapDocument?.transId ?? null),
     U_PostingHash: c.postingHash, U_ReopenedFrom: c.reopenedFrom,
     U_CancelledAt: c.cancelledAt, U_Notes: c.notes, U_LastError: c.lastError,
     U_PostingBasis: c.postingBasis === null ? null : JSON.stringify(c.postingBasis),
@@ -60,6 +63,10 @@ function fromLine(row: SapRow): ClosingLine {
     revaluation: String(row.U_Revaluation), status: String(row.U_Status) };
 }
 function fromHeader(row: SapRow, lines: ClosingLine[]): GgfClosing {
+  const postingBasis = row.U_PostingBasis ? JSON.parse(String(row.U_PostingBasis)) : null;
+  const documentEntry = parseNumber(row.U_SapDocEntry);
+  const documentNumber = parseNumber(row.U_SapDocNum);
+  const journalEntry = postingBasis?.documentType === "JournalEntry.CPV";
   const c: GgfClosing = {
     closingId: row.Code, companyDB: String(row.U_CompanyDB), periodStart: String(row.U_PeriodStart),
     periodEnd: String(row.U_PeriodEnd), branch: String(row.U_Branch ?? ""),
@@ -70,14 +77,16 @@ function fromHeader(row: SapRow, lines: ClosingLine[]): GgfClosing {
     postedAt: row.U_PostedAt ? String(row.U_PostedAt) : null,
     totalGgf: String(row.U_TotalGgf ?? "0.00"), totalAllocated: String(row.U_TotalAllocated ?? "0.00"),
     totalRevalued: String(row.U_TotalRevalued ?? "0.00"),
-    sapMaterialRevaluationDocEntry: parseNumber(row.U_SapDocEntry),
-    sapMaterialRevaluationDocNum: parseNumber(row.U_SapDocNum),
+    sapMaterialRevaluationDocEntry: journalEntry ? null : documentEntry,
+    sapMaterialRevaluationDocNum: journalEntry ? null : documentNumber,
+    sapJournalEntryDocEntry: journalEntry ? documentEntry : null,
+    sapJournalEntryDocNum: journalEntry ? documentNumber : null,
     sapJournalTransId: parseNumber(row.U_SapTransId),
     postingHash: row.U_PostingHash ? String(row.U_PostingHash) : null,
     reopenedFrom: row.U_ReopenedFrom ? String(row.U_ReopenedFrom) : null,
     cancelledAt: row.U_CancelledAt ? String(row.U_CancelledAt) : null,
     notes: String(row.U_Notes ?? ""), lastError: row.U_LastError ? String(row.U_LastError) : null,
-    postingBasis: row.U_PostingBasis ? JSON.parse(String(row.U_PostingBasis)) : null,
+    postingBasis,
     proposedPayload: row.U_ProposedPayload ? JSON.parse(String(row.U_ProposedPayload)) : null,
     lines
   };
@@ -99,6 +108,23 @@ export interface GgfClosingStore {
 export class SapGgfClosingRepository implements GgfClosingStore {
   constructor(private readonly client: SlReadWrite,
     private readonly context: { user?: string; session?: string; now?: () => string } = {}) {}
+
+  private async verificationClaim(closingId: string, basis?: GgfClosing["postingBasis"]): Promise<{ hash: string; version: number } | null> {
+    if (basis?.documentType === "JournalEntry.CPV" && basis.postingPlanHash &&
+        basis.postingClosingVersion && basis.postingPlanVersion) {
+      const executionId = await calculateGgfExecutionId({ closingId, closingVersion: basis.postingClosingVersion,
+        postingPlanVersion: basis.postingPlanVersion, postingHash: basis.postingPlanHash });
+      let row: SapRow | undefined;
+      try { row = await this.client.get<SapRow>(`${CLAIM}(${quote(executionId)})`); }
+      catch (error) { if (error instanceof ServiceLayerError && error.status === 404) return null; throw error; }
+      if (!row || row.Code !== executionId || row.U_ExecutionId !== executionId || row.U_ClosingId !== closingId ||
+          row.U_PostingHash !== basis.postingPlanHash || Number(row.U_ClosingVersion) !== basis.postingClosingVersion ||
+          Number(row.U_PostingPlanVersion) !== basis.postingPlanVersion)
+        throw new Error("Execution claim identity differs from the posted closing basis");
+      return { hash: String(row.U_PostingHash), version: Number(row.U_ClosingVersion) };
+    }
+    return this.getClaim(closingId);
+  }
 
   private async violation(report: ClosingIntegrityReport): Promise<never> {
     const at = new Date(report.detectedAt);
@@ -129,10 +155,14 @@ export class SapGgfClosingRepository implements GgfClosingStore {
     if (header.U_Status !== "POSTED" && header.U_Status !== "REOPENED" &&
         (header.U_PostedAt || header.U_SapDocEntry || header.U_SapTransId)) {
       let claim: { hash: string; version: number } | null = null;
-      try { claim = await this.getClaim(closingId); } catch { /* Still block altered posted link. */ }
+      try {
+        const basis = header.U_PostingBasis ? JSON.parse(String(header.U_PostingBasis)) as GgfClosing["postingBasis"] : null;
+        claim = await this.verificationClaim(closingId, basis);
+      } catch { /* Still block altered posted link. */ }
       return this.violation({ status: "INTEGRITY_VIOLATION", closingId,
         version: Number(header.U_Version) || 0,
         closingStatus: String(header.U_Status ?? ""),
+      sapDocumentType: null,
         sapDocEntry: positiveNumber(header.U_SapDocEntry),
         sapDocNum: positiveNumber(header.U_SapDocNum),
         sapTransId: positiveNumber(header.U_SapTransId),
@@ -172,8 +202,8 @@ export class SapGgfClosingRepository implements GgfClosingStore {
       }
       const closing = fromHeader(header, rows.map(fromLine));
       if (closing.status === "POSTED" ||
-          (closing.status === "REOPENED" && closing.sapMaterialRevaluationDocEntry !== null)) {
-        const report = await inspectClosingIntegrity(closing, await this.getClaim(closingId), this.context);
+          (closing.status === "REOPENED" && closingSapDocument(closing) !== null)) {
+        const report = await inspectClosingIntegrity(closing, await this.verificationClaim(closingId, closing.postingBasis), this.context);
         if (report.status !== "VALID") await this.violation(report);
         closing.integrityStatus = "VALID";
       } else {
@@ -186,10 +216,13 @@ export class SapGgfClosingRepository implements GgfClosingStore {
           (header.U_Status !== "POSTED" && header.U_Status !== "REOPENED")) throw error;
       if (error instanceof ServiceLayerError) throw error;
       let claim: { hash: string; version: number } | null = null;
-      try { claim = await this.getClaim(closingId); } catch { /* Retain the read failure as a violation. */ }
+      try { claim = await this.verificationClaim(closingId,
+        header.U_PostingBasis ? JSON.parse(String(header.U_PostingBasis)) as GgfClosing["postingBasis"] : null); }
+      catch { /* Retain the read failure as a violation. */ }
       return this.violation({ status: "INTEGRITY_VIOLATION", closingId,
         version: Number(header.U_Version) || 0,
         closingStatus: String(header.U_Status ?? ""),
+        sapDocumentType: null,
         sapDocEntry: positiveNumber(header.U_SapDocEntry),
         sapDocNum: positiveNumber(header.U_SapDocNum),
         sapTransId: positiveNumber(header.U_SapTransId),
@@ -207,7 +240,7 @@ export class SapGgfClosingRepository implements GgfClosingStore {
       const closing = await this.get(closingId);
       if (!closing) return null;
       return inspectClosingIntegrity(closing,
-        closing.integrityStatus === "VALID" ? await this.getClaim(closingId) : null, this.context);
+        closing.integrityStatus === "VALID" ? await this.verificationClaim(closingId, closing.postingBasis) : null, this.context);
     } catch (error) {
       if (error instanceof ClosingIntegrityViolation) return error.report;
       throw error;
@@ -226,9 +259,9 @@ export class SapGgfClosingRepository implements GgfClosingStore {
 
   async replace(expected: GgfClosing, next: GgfClosing): Promise<void> {
     if (expected.status === "POSTED" ||
-        (expected.status === "REOPENED" && expected.sapMaterialRevaluationDocEntry !== null))
+        (expected.status === "REOPENED" && closingSapDocument(expected) !== null))
       await this.get(expected.closingId);
-    if (expected.status === "REOPENED" && expected.sapMaterialRevaluationDocEntry !== null)
+    if (expected.status === "REOPENED" && closingSapDocument(expected) !== null)
       throw new Error("Reopened posted closing is read-only; create a new ClosingId");
     assertClosingIdentity(next);
     if (next.closingId !== expected.closingId || next.companyDB !== expected.companyDB ||
@@ -238,15 +271,13 @@ export class SapGgfClosingRepository implements GgfClosingStore {
     if (["READY_TO_POST","POSTING","POSTING_PARTIAL","POSTING_UNCERTAIN","POSTED","FAILED"].includes(next.status) &&
         (!next.postingHash || !next.postingBasis || !next.proposedPayload))
       throw new Error("Posting state requires persisted hash, basis and payload");
-    if (next.status === "POSTED" &&
-        (!next.sapMaterialRevaluationDocEntry || !next.sapMaterialRevaluationDocNum ||
-         !next.sapJournalTransId || !next.postedAt)) throw new Error("POSTED requires verified SAP link");
+    if (next.status === "POSTED" && (!closingSapDocument(next) || !next.postedAt))
+      throw new Error("POSTED requires verified SAP link");
     if (expected.status === "POSTED" && (next.status !== "REOPENED" ||
         JSON.stringify(next.lines) !== JSON.stringify(expected.lines) ||
         next.totalGgf !== expected.totalGgf || next.totalAllocated !== expected.totalAllocated ||
         next.totalRevalued !== expected.totalRevalued ||
-        next.sapMaterialRevaluationDocEntry !== expected.sapMaterialRevaluationDocEntry ||
-        next.sapMaterialRevaluationDocNum !== expected.sapMaterialRevaluationDocNum ||
+        JSON.stringify(closingSapDocument(next)) !== JSON.stringify(closingSapDocument(expected)) ||
         next.sapJournalTransId !== expected.sapJournalTransId))
       throw new Error("POSTED version is immutable; reopen without changing functional content");
     if (["POSTING","POSTING_PARTIAL","POSTING_UNCERTAIN","POSTED","FAILED"].includes(expected.status) &&
@@ -257,7 +288,8 @@ export class SapGgfClosingRepository implements GgfClosingStore {
     await assertClosingConsistency(next);
     const current = await this.get(expected.closingId);
     if (!current || current.version !== expected.version || current.status !== expected.status ||
-        current.postingHash !== expected.postingHash || current.sapMaterialRevaluationDocEntry !== expected.sapMaterialRevaluationDocEntry)
+        current.postingHash !== expected.postingHash ||
+        JSON.stringify(closingSapDocument(current)) !== JSON.stringify(closingSapDocument(expected)))
       throw new Error("Closing changed in SAP before update");
     const changed = JSON.stringify(current.lines) !== JSON.stringify(next.lines) ||
       JSON.stringify(current.postingBasis?.fifoLineage) !== JSON.stringify(next.postingBasis?.fifoLineage);

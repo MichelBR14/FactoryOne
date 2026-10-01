@@ -23,6 +23,10 @@ export interface ClosingLine {
 }
 
 export interface PostingBasis {
+  documentType?: "MaterialRevaluation" | "JournalEntry.CPV";
+  postingPlanHash?: string;
+  postingClosingVersion?: number;
+  postingPlanVersion?: number;
   companyDB: string;
   periodStart: string;
   periodEnd: string;
@@ -56,6 +60,8 @@ export interface GgfClosing {
   totalRevalued: string;
   sapMaterialRevaluationDocEntry: number | null;
   sapMaterialRevaluationDocNum: number | null;
+  sapJournalEntryDocEntry?: number | null;
+  sapJournalEntryDocNum?: number | null;
   sapJournalTransId: number | null;
   postingHash: string | null;
   reopenedFrom: string | null;
@@ -102,6 +108,18 @@ export function assertClosingIdentity(closing: GgfClosing): void {
     throw new Error("Invalid GGF closing identity");
 }
 
+export function closingSapDocument(closing: GgfClosing): SapPostingLink | null {
+  if (closing.postingBasis?.documentType === "JournalEntry.CPV") {
+    const docEntry = closing.sapJournalEntryDocEntry ?? null;
+    const docNum = closing.sapJournalEntryDocNum ?? null;
+    return docEntry && docNum && closing.sapJournalTransId
+      ? { docEntry, docNum, transId: closing.sapJournalTransId } : null;
+  }
+  return closing.sapMaterialRevaluationDocEntry && closing.sapMaterialRevaluationDocNum && closing.sapJournalTransId
+    ? { docEntry: closing.sapMaterialRevaluationDocEntry,
+      docNum: closing.sapMaterialRevaluationDocNum, transId: closing.sapJournalTransId } : null;
+}
+
 function canonical(value: unknown): unknown {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number" && Number.isFinite(value)) return Object.is(value, -0) ? 0 : value;
@@ -118,7 +136,8 @@ function canonical(value: unknown): unknown {
 /** SHA-256 of functional input only; no timestamps, session data, or transport state. */
 export async function postingHash(input: PostingBasis): Promise<string> {
   if (!input.companyDB || !input.periodStart || !input.periodEnd || !input.accounts.length ||
-      !input.lines.length || !Array.isArray(input.payload.MaterialRevaluationLines) ||
+      !input.lines.length || !(input.documentType === "JournalEntry.CPV"
+        ? Array.isArray(input.payload.JournalEntryLines) : Array.isArray(input.payload.MaterialRevaluationLines)) ||
       !(globalThis.crypto?.subtle)) throw new Error("Incomplete posting basis or SHA-256 unavailable");
   const keys = input.lines.map(l => `${l.account}/${l.orderId}/${l.item}/${l.warehouse}`);
   if (new Set(keys).size !== keys.length) throw new Error("Duplicate GGF closing audit line");
@@ -166,6 +185,10 @@ export async function postingHash(input: PostingBasis): Promise<string> {
     }
   }
   const stable = canonical({
+    ...(input.documentType ? { documentType: input.documentType } : {}),
+    ...(input.postingPlanHash ? { postingPlanHash: input.postingPlanHash } : {}),
+    ...(input.postingClosingVersion ? { postingClosingVersion: input.postingClosingVersion } : {}),
+    ...(input.postingPlanVersion ? { postingPlanVersion: input.postingPlanVersion } : {}),
     companyDB: input.companyDB, periodStart: input.periodStart, periodEnd: input.periodEnd,
     branch: input.branch, dimensions: input.dimensions, totals: input.totals,
     accounts: [...input.accounts].sort((a, b) => a.account.localeCompare(b.account)),
@@ -189,8 +212,7 @@ const functionalLines = (lines: ClosingLine[]) => lines.map(({ status, ...functi
 export async function assertClosingConsistency(closing: GgfClosing): Promise<void> {
   assertClosingIdentity(closing);
   if (closing.status === "POSTED" &&
-      (!closing.sapMaterialRevaluationDocEntry || !closing.sapMaterialRevaluationDocNum ||
-       !closing.sapJournalTransId || !closing.postedAt))
+      (!closingSapDocument(closing) || !closing.postedAt))
     throw new Error("POSTED closing lacks a verified SAP document link");
   const allocated = closing.lines.reduce((total, line) => total + parseDecimal(line.allocated), 0n);
   const revalued = closing.lines.reduce((total, line) => total + parseDecimal(line.revaluation), 0n);

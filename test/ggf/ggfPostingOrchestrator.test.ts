@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildAccountingPreview, type AccountingPreviewLineInput } from "../../webapp/modules/ggf/service/AccountingPreview";
 import { buildGgfPostingPlanDraft, calculateGgfPostingPlanHash, type GgfPostingPlan,
   type GgfPostingPlanDocument } from "../../webapp/modules/ggf/service/GgfPostingPlan";
-import { calculateGgfExecutionId } from "../../webapp/modules/ggf/service/GgfPostingExecution";
+import { calculateGgfExecutionId, calculateGgfRequestHash } from "../../webapp/modules/ggf/service/GgfPostingExecution";
 import { DefiniteGgfDocumentRejection, GgfPostingOrchestrator, type GgfPostingClaim,
   type GgfPostingDocumentGateway, type GgfPostingExecution, type GgfPostingOrchestrationStore,
   type GgfDocumentPostingResult, type PersistedGgfPostingBundle } from "../../webapp/modules/ggf/service/GgfPostingOrchestrator";
@@ -76,6 +76,7 @@ class MemoryOrchestrationStore implements GgfPostingOrchestrationStore {
 
 class MemoryDocumentGateway implements GgfPostingDocumentGateway {
   posts: GgfPostingPlanDocument["type"][] = [];
+  reconciliations: GgfPostingPlanDocument["type"][] = [];
   failAt: number | null = null;
   uncertainAt: number | null = null;
   found = true;
@@ -98,6 +99,7 @@ class MemoryDocumentGateway implements GgfPostingDocumentGateway {
   }
   async reconcile(input: { documentType: GgfPostingPlanDocument["type"]; expectedCents: string }):
     Promise<{ complete: true; matches: GgfDocumentPostingResult[] }> {
+    this.reconciliations.push(input.documentType);
     const index = this.posts.indexOf(input.documentType);
     return { complete: true, matches: this.found && index >= 0 ? [{ docEntry: 100 + index, docNum: 200 + index,
       transId: 300 + index, response: { DocEntry: 100 + index, Amount: input.expectedCents } }] : [] };
@@ -203,6 +205,47 @@ describe("GGF posting orchestration (offline; no SAP financial POST)", () => {
     expect(recovered.documents[1]?.status).toBe("PENDING");
     expect(gateway.posts).toHaveLength(count);
     expect(store.claimValue).not.toBeNull();
+  });
+
+  it("resume reconciles UNCERTAIN only and leaves a dependent PENDING document undispatched", async () => {
+    const { store, gateway, service } = await fixture();
+    const ready = store.executions[0]!;
+    const plans = store.plan.documents.filter(document => document.status !== "NOT_REQUIRED")
+      .sort((left, right) => left.order - right.order);
+    expect(plans).toHaveLength(3);
+    const documents = [];
+    for (let index = 0; index < plans.length; index++) {
+      const planned = plans[index]!;
+      const status = index === 0 ? "RECONCILED" as const : index === 1 ? "UNCERTAIN" as const : "PENDING" as const;
+      const raw = index < 2 ? (await gateway.prepare(planned)).payload : null;
+      const request = raw ? { ...raw, AuthCookie: "[REDACTED]" } : {};
+      const requestHash = raw ? await calculateGgfRequestHash(request) : null;
+      const completedAt = status === "RECONCILED" ? time : null;
+      documents.push({ documentType: planned.type, order: planned.order, expectedCents: planned.totalCents,
+        request, response: status === "RECONCILED" ? { DocEntry: 100 } : null, currency: planned.currency,
+        docEntry: status === "RECONCILED" ? 100 : null, docNum: status === "RECONCILED" ? 200 : null,
+        transId: status === "RECONCILED" ? 300 : null, status,
+        reconciliation: status === "RECONCILED" ? "MATCHED" as const : status === "UNCERTAIN" ? "NO_MATCH" as const : "NOT_RUN" as const,
+        requestHash, attemptCount: status === "PENDING" ? 0 : 1,
+        attemptStartedAt: status === "PENDING" ? null : time, responseReceivedAt: completedAt,
+        reconciledAt: completedAt, dependencies: [...planned.dependencies],
+        attempts: requestHash ? [{ attempt: 1, requestHash, startedAt: time, responseReceivedAt: completedAt,
+          status, sanitizedError: null }] : [], error: null });
+    }
+    const execution = { ...ready, status: "POSTING_UNCERTAIN" as const, claimedAt: time, claimedBy: actor,
+      documents, error: "TECHNICAL_FIXTURE_UNCERTAIN" };
+    store.executions = [execution];
+    store.lifecycleVersion = execution.lifecycleVersion;
+    store.closingStatus = "POSTING_UNCERTAIN";
+    store.claimValue = { executionId: execution.executionId, closingId, postingHash: execution.postingHash,
+      closingVersion: execution.closingVersion, postingPlanVersion: execution.postingPlanVersion,
+      status: "POSTING_UNCERTAIN", updatedAt: time, claimedAt: time, claimedBy: actor };
+
+    const resumed = await service.resumeExecution(execution.executionId);
+    expect(gateway.posts).toEqual([]);
+    expect(gateway.reconciliations).toEqual([plans[1]!.type]);
+    expect(resumed.documents.map(document => document.status)).toEqual(["RECONCILED", "UNCERTAIN", "PENDING"]);
+    expect(resumed.documents[2]?.dependencies).toEqual(plans[2]!.dependencies);
   });
 
   it("blocks resume when the reconstructed request hash differs and never resends", async () => {

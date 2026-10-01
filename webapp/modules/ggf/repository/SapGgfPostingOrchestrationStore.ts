@@ -1,7 +1,8 @@
 import type { SlReadWrite } from "../../../core/data/SetupRepository";
 import { SapGgfClosingRepository } from "./SapGgfClosingRepository";
 import { SapGgfPostingPlanRepository } from "./SapGgfPostingPlanRepository";
-import { SapGgfPostingClaimRepository, SapGgfPostingExecutionRepository } from "./SapGgfPostingExecutionRepository";
+import { SapGgfExecutionIntegrityError, SapGgfPostingClaimRepository,
+  SapGgfPostingExecutionRepository } from "./SapGgfPostingExecutionRepository";
 import { transitionClosing, type ClosingStatus } from "../service/GgfClosing";
 import { calculateGgfExecutionId, executionTotals, type GgfPostingDocumentLedger,
   type GgfPostingExecutionRecord } from "../service/GgfPostingExecution";
@@ -18,7 +19,7 @@ function asRecord(execution: GgfPostingExecution): GgfPostingExecutionRecord {
     postingPlanVersion: execution.postingPlanVersion, postingHash: execution.postingHash };
   const documents: GgfPostingDocumentLedger[] = execution.documents.map(document => ({
     executionId: execution.executionId, identity, sequence: document.order, documentType: document.documentType,
-    plannedAmount: document.expectedCents, currency: null, status: document.status,
+    plannedAmount: document.expectedCents, currency: document.currency, status: document.status,
     requestHash: document.requestHash, request: Object.keys(document.request).length ? document.request : null,
     response: document.response, dependencies: document.dependencies, attemptCount: document.attemptCount,
     attemptStartedAt: document.attemptStartedAt, responseReceivedAt: document.responseReceivedAt,
@@ -44,6 +45,7 @@ function fromRecord(record: GgfPostingExecutionRecord, lifecycleVersion: number)
       order: document.sequence, expectedCents: document.plannedAmount,
       request: document.request ?? {}, response: document.response, docEntry: document.sapDocEntry,
       docNum: document.sapDocNum, transId: document.sapTransId, status: document.status,
+      currency: document.currency,
       reconciliation: document.reconciliationStatus, requestHash: document.requestHash,
       attemptCount: document.attemptCount, attemptStartedAt: document.attemptStartedAt,
       responseReceivedAt: document.responseReceivedAt, reconciledAt: document.reconciledAt,
@@ -74,6 +76,7 @@ export class SapGgfPostingOrchestrationStore implements GgfPostingOrchestrationS
     const closingVersion = plan.closingVersion ?? closing.version;
     return { closingId, closingVersion, lifecycleVersion: closing.version, closingStatus: closing.status,
       closingPostingHash: closing.postingHash, closingIntegrity: closing.integrityStatus ?? "NOT_APPLICABLE",
+      closingBoundPlanHash: closing.postingBasis?.postingPlanHash ?? null,
       plan, planReadbackHash: plan.postingHash, metadataAvailable: true,
       homologatedValuationMethods: [...this.homologatedValuationMethods], companyDB: closing.companyDB,
       user: plan.createdBy ?? closing.createdBy ?? null };
@@ -96,7 +99,16 @@ export class SapGgfPostingOrchestrationStore implements GgfPostingOrchestrationS
 
   async append(execution: GgfPostingExecution): Promise<void> {
     const record = asRecord(execution);
-    const existing = await this.executions.get(execution.executionId);
+    let existing: GgfPostingExecutionRecord | null;
+    try { existing = await this.executions.get(execution.executionId); }
+    catch (error) {
+      if (error instanceof SapGgfExecutionIntegrityError && error.message === "Execution/document ledger count differs" &&
+          execution.status === "READY_TO_POST" && !await this.claims.get(execution.executionId)) {
+        await this.executions.create(record);
+        return;
+      }
+      throw error;
+    }
     if (existing) await this.executions.save(record);
     else await this.executions.create(record);
   }
@@ -111,16 +123,35 @@ export class SapGgfPostingOrchestrationStore implements GgfPostingOrchestrationS
     return fromRecord(record, closing.version);
   }
 
-  async latest(executionId: string): Promise<GgfPostingExecution | null> { return this.findExecution(executionId); }
+  async latest(executionId: string): Promise<GgfPostingExecution | null> {
+    try { return await this.findExecution(executionId); }
+    catch (error) {
+      if (error instanceof SapGgfExecutionIntegrityError && error.message === "Execution/document ledger count differs" &&
+          !await this.claims.get(executionId)) return null;
+      throw error;
+    }
+  }
 
   async transitionClosing(input: { closingId: string; expectedVersion: number; expectedStatus: string;
-    status: GgfPostingExecution["status"]; postingHash: string; postingPlanVersion: number; error: string | null }): Promise<number> {
+    status: GgfPostingExecution["status"]; postingHash: string; postingPlanVersion: number; error: string | null;
+    documentLink?: { documentType: string; docEntry: number; docNum: number; transId: number; postedAt: string } }): Promise<number> {
     const current = await this.closing.get(input.closingId);
     if (!current || current.version !== input.expectedVersion || current.status !== input.expectedStatus)
       throw new Error("SAP closing changed before execution state transition");
     const target = input.status === "PAYLOAD_INTEGRITY_VIOLATION" ? "POSTING_UNCERTAIN" : input.status;
-    const next = { ...transitionClosing(current, target as ClosingStatus), postingHash: input.postingHash,
-      lastError: input.error };
+    const documentLink = input.documentLink;
+    const expectedDocumentType = current.postingBasis?.documentType ?? "MaterialRevaluation";
+    if (target === "POSTED" && (!documentLink || documentLink.documentType !== expectedDocumentType))
+      throw new Error("Posted SAP document type/link differs from the bound closing basis");
+    const next = { ...transitionClosing(current, target as ClosingStatus), postingHash: current.postingHash,
+      lastError: input.error,
+      ...(documentLink?.documentType === "JournalEntry.CPV" ? {
+        sapJournalEntryDocEntry: documentLink.docEntry, sapJournalEntryDocNum: documentLink.docNum,
+        sapJournalTransId: documentLink.transId, postedAt: documentLink.postedAt
+      } : documentLink ? {
+        sapMaterialRevaluationDocEntry: documentLink.docEntry, sapMaterialRevaluationDocNum: documentLink.docNum,
+        sapJournalTransId: documentLink.transId, postedAt: documentLink.postedAt
+      } : {}) };
     await this.closing.replace(current, next);
     return next.version;
   }

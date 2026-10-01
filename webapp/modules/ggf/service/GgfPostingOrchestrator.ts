@@ -12,6 +12,7 @@ export interface GgfPostingDocumentLink {
   expectedCents: string;
   request: Record<string, unknown>;
   response: Record<string, unknown> | null;
+  currency: string | null;
   docEntry: number | null;
   docNum: number | null;
   transId: number | null;
@@ -54,6 +55,7 @@ export interface PersistedGgfPostingBundle {
   lifecycleVersion: number;
   closingStatus: string;
   closingPostingHash: string | null;
+  closingBoundPlanHash?: string | null;
   closingIntegrity: "VALID" | "NOT_APPLICABLE" | "INTEGRITY_VIOLATION";
   plan: GgfPostingPlan;
   planReadbackHash: string;
@@ -90,6 +92,8 @@ export interface GgfPostingOrchestrationStore {
   transitionClosing(input: {
     closingId: string; expectedVersion: number; expectedStatus: string; status: GgfPostingExecutionStatus;
     postingHash: string; postingPlanVersion: number; error: string | null;
+    documentLink?: { documentType: GgfPostingPlanDocument["type"]; docEntry: number; docNum: number;
+      transId: number; postedAt: string };
   }): Promise<number>;
 }
 
@@ -146,7 +150,8 @@ async function assertPersistedIntegrity(bundle: PersistedGgfPostingBundle, reque
       plan.version !== planVersion || plan.closingVersion !== bundle.closingVersion ||
       plan.companyDB !== bundle.companyDB || plan.sourceMode !== "SAP_READ_ONLY")
     throw new Error("Persisted closing and PostingPlan identity differs");
-  if (!bundle.closingPostingHash || bundle.closingPostingHash !== plan.postingHash ||
+  const closingPlanHash = bundle.closingBoundPlanHash ?? bundle.closingPostingHash;
+  if (!bundle.closingPostingHash || closingPlanHash !== plan.postingHash ||
       bundle.planReadbackHash !== plan.postingHash || await calculateGgfPostingPlanHash(plan) !== plan.postingHash)
     throw new Error("Persisted closing/PostingPlan hash differs");
 }
@@ -176,6 +181,22 @@ async function assertReady(bundle: PersistedGgfPostingBundle, requestedClosingId
       }
     }
   }
+  if (plan.technicalOnly === true) {
+    if (!/^TECH7C-[A-Z0-9-]{8,22}$/.test(plan.closingId) || plan.companyDB !== "SBODEMOBR2" ||
+        plan.periodStart !== "2026-10-01" || plan.periodEnd !== "2026-10-01" || plan.branch !== "1" ||
+        plan.documents.length !== 1 || required.length !== 1 || required[0]?.type !== "JournalEntry.CPV" ||
+        required[0].totalCents !== "100" || required[0].currency !== "R$" || required[0].lines.length !== 1 ||
+        required[0].lines[0]?.debitAccount !== "5.01.01.01.01" ||
+        required[0].lines[0]?.creditAccount !== "5.04.01.01.05" || required[0].lines[0]?.amountCents !== "100" ||
+        required[0].lines[0]?.dimensions.length !== 0 || plan.lines.length !== 1 ||
+        plan.lines[0]?.debitAccounts.join() !== "5.01.01.01.01" ||
+        plan.lines[0]?.creditAccounts.join() !== "5.04.01.01.05" || plan.lines[0]?.amountCents !== "100" ||
+        plan.totalMod !== "0" || plan.totalGgf !== "100" || plan.totalStock !== "0" || plan.totalCpv !== "100" ||
+        plan.totalBlocked !== "0" ||
+        plan.totalDifference !== "0" || plan.accountingDifference !== "0" || plan.blockers.length)
+      throw new Error("Technical Journal Entry homologation plan is outside the approved one-cent scenario");
+    return;
+  }
   const documentTotal = (type: GgfPostingPlanDocument["type"]) => required
     .filter(document => document.type === type).reduce((sum, document) => sum + BigInt(document.totalCents), 0n);
   if (documentTotal("MaterialRevaluation") !== BigInt(plan.totalStock) ||
@@ -202,6 +223,7 @@ function createDocumentLinks(bundle: PersistedGgfPostingBundle): GgfPostingDocum
   return bundle.plan.documents.filter(document => document.status !== "NOT_REQUIRED")
     .sort((a, b) => a.order - b.order).map(document => ({ documentType: document.type,
       order: document.order, expectedCents: document.totalCents, request: {}, response: null,
+      currency: document.currency,
       docEntry: null, docNum: null, transId: null, status: "PENDING" as const,
       reconciliation: "NOT_RUN" as const, requestHash: null, attemptCount: 0,
       attemptStartedAt: null, responseReceivedAt: null, reconciledAt: null,
@@ -441,7 +463,14 @@ export class GgfPostingOrchestrator {
     const lifecycleVersion = status === previous.status ? previous.lifecycleVersion :
       await this.store.transitionClosing({ closingId: bundle.closingId,
         expectedVersion: previous.lifecycleVersion, expectedStatus: previous.status, status,
-        postingHash: bundle.plan.postingHash, postingPlanVersion: bundle.plan.version, error });
+        postingHash: bundle.plan.postingHash, postingPlanVersion: bundle.plan.version, error,
+        ...(status === "POSTED" ? (() => {
+          const document = documents.find(row => row.status === "RECONCILED" && row.reconciliation === "MATCHED");
+          if (!document || document.docEntry === null || document.docNum === null || document.transId === null)
+            throw new Error("Posted closing requires a reconciled SAP document link");
+          return { documentLink: { documentType: document.documentType, docEntry: document.docEntry,
+            docNum: document.docNum, transId: document.transId, postedAt: at } };
+        })() : {}) });
     const next = { ...previous, lifecycleVersion, status, updatedAt: at,
       finishedAt: ["POSTED", "FAILED", "PAYLOAD_INTEGRITY_VIOLATION"].includes(status) ? at : null,
       documents: structuredClone(documents), error };

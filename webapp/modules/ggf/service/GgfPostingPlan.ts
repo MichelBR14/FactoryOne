@@ -58,6 +58,8 @@ export interface GgfPostingPlanDocument {
 }
 
 export interface GgfPostingPlan {
+  /** Explicitly isolated test ledger plan. Never produced by the product UI. */
+  technicalOnly?: boolean;
   closingId: string;
   version: number;
   closingVersion: number | null;

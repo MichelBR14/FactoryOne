@@ -31,7 +31,12 @@ export class SapGgfExecutionIntegrityError extends Error {
 
 export class SapGgfExecutionWriteUncertainError extends Error {
   readonly code = "POSTING_EXECUTION_WRITE_UNCERTAIN";
-  constructor() { super("SAP execution ledger write is uncertain; reread SAP before continuing"); }
+  constructor(readonly httpStatus?: number, readonly sapCode?: number | string, localDiagnostic?: string) {
+    const safe = localDiagnostic?.replace(/(password|cookie|token|session|authorization)\s*[:=]\s*\S+/ig, "$1=[REDACTED]")
+      .replace(/[\r\n]/g, " ").slice(0, 160);
+    super(`SAP execution ledger write is uncertain${httpStatus ? ` (HTTP ${httpStatus}${sapCode ? `, code ${sapCode}` : ""})` : ""}` +
+      `${safe ? ` [${safe}]` : ""}; reread SAP before continuing`);
+  }
 }
 
 function normalize(error: unknown): unknown {
@@ -214,10 +219,13 @@ export class SapGgfPostingExecutionRepository {
         throw new SapGgfExecutionIntegrityError("Only an undispatched READY ledger can resume incomplete initialization");
     } else {
       try { await this.client.post(EXEC, expectedHeader); }
-      catch {
+      catch (error) {
         header = await this.readHeader(record.executionId);
         if (!header || Object.entries(expectedHeader).some(([key, value]) => header![key] !== value))
-          throw new SapGgfExecutionWriteUncertainError();
+          throw new SapGgfExecutionWriteUncertainError(
+            error instanceof ServiceLayerError ? error.status : undefined,
+            error instanceof ServiceLayerError ? error.code : undefined,
+            !(error instanceof ServiceLayerError) && error instanceof Error ? error.message : undefined);
       }
     }
     for (const document of record.documents) {
@@ -234,10 +242,16 @@ export class SapGgfPostingExecutionRepository {
         continue;
       }
       try { await this.client.post(DOC, expectedDocument); }
-      catch {
+      catch (error) {
         try { persisted = await this.client.get<SapRow>(`${DOC}(${quote(code)})`); }
-        catch { throw new SapGgfExecutionWriteUncertainError(); }
-        if (!persisted) throw new SapGgfExecutionWriteUncertainError();
+        catch { throw new SapGgfExecutionWriteUncertainError(
+          error instanceof ServiceLayerError ? error.status : undefined,
+          error instanceof ServiceLayerError ? error.code : undefined,
+          !(error instanceof ServiceLayerError) && error instanceof Error ? error.message : undefined); }
+        if (!persisted) throw new SapGgfExecutionWriteUncertainError(
+          error instanceof ServiceLayerError ? error.status : undefined,
+          error instanceof ServiceLayerError ? error.code : undefined,
+          !(error instanceof ServiceLayerError) && error instanceof Error ? error.message : undefined);
         const parsed = await parseDocument(persisted, record.identity, record.executionId, document.sequence - 1);
         if (JSON.stringify(parsed) !== JSON.stringify(document))
           throw new SapGgfExecutionIntegrityError("Ambiguous document create differs from its planned state");

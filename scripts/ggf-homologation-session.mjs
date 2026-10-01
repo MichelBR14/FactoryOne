@@ -11,6 +11,14 @@ const READ_ACTIONS = new Set([
 ]);
 const WRITABLE = new Set(["Items", "ProductTrees", "ProductionOrders", "InventoryGenEntries"]);
 const CLOSING_EVIDENCE_IDS = new Set(["F1HC260928A", "F1HC260928B", "F1HL260928A", "F1HL260929F"]);
+const EXECUTION_METADATA_FIELDS = new Map([
+  ["FBO_GGF_CLAIM", new Set(["ClosingVersion", "PostingPlanVersion", "ExecutionId", "Status", "CreatedAt", "UpdatedAt", "ClaimedBy"])],
+  ["FBO_GGF_PEXEC", new Set(["ClosingId", "ClosingVersion", "PostingPlanVersion", "PostingHash", "Status", "StartedAt", "FinishedAt", "StartedBy", "LastError", "TotalExpected", "TotalPosted", "TotalReconciled", "DocumentCount"])],
+  ["FBO_GGF_PDOC", new Set(["ExecutionId", "ClosingId", "ClosingVersion", "PostingPlanVersion", "PostingHash", "Sequence", "DocumentType", "PlannedAmount", "Currency", "Status", "RequestHash", "Request", "Response", "Dependencies", "AttemptCount", "AttemptStartedAt", "ResponseReceivedAt", "SapDocEntry", "SapDocNum", "SapTransId", "ReconciledAt", "ReconStatus", "SanitizedError", "AttemptHistory"])]
+]);
+const TECHNICAL_EXECUTION_PREFIX = "TECH7B-";
+const PHASE7C = Object.freeze({ debit: "5.01.01.01.01", credit: "5.04.01.01.05", cents: 100,
+  date: "2026-10-01", branch: 1, currency: "R$", memo: "HOMOLOGAÇÃO TÉCNICA FACTORYONE GGF" });
 
 /** Local, opt-in test-company transport. Callers own the persistent write-intent journal. */
 export async function openHomologationSession(transportOverride) {
@@ -36,8 +44,13 @@ export async function openHomologationSession(transportOverride) {
   const routeNode = /ROUTEID=\.node(\d+)$/.exec(route??"")?.[1]??null;
   let cookie = `B1SESSION=${auth.SessionId}${route ? `; ${route}` : ""}`;
   let revaluationAttempted = false;
+  let phase7cFinancialAttempted = false;
+  let phase7cClosingId = null;
+  let phase7cExecutionId = null;
+  let phase7cPostingHash = null;
   const assertNonFinancialTlsScope = (operation) => {
-    if (localCertificateException && !["PPLAN_METADATA", "PPLAN_SNAPSHOT", "GGF_SCHEMA_VERSION"].includes(operation))
+    if (localCertificateException && !["PPLAN_METADATA", "PPLAN_SNAPSHOT", "GGF_SCHEMA_VERSION",
+        "PEXEC_PDOC_TECHNICAL_LEDGER"].includes(operation))
       throw new Error("Unverified certificate mode permits only GGF posting-plan metadata and snapshot operations");
   };
   async function request(path, method, body, accept = "application/json") {
@@ -83,17 +96,176 @@ export async function openHomologationSession(transportOverride) {
     },
     postMetadata(name,body) {
       const table=body?.TableName??body?.Code;
+      const executionTable = typeof table === "string" ? table.replace(/^@/, "") : "";
+      const executionMetadataWrite = (name === "UserTablesMD" && ["FBO_GGF_PEXEC","FBO_GGF_PDOC"].includes(table)) ||
+        (name === "UserFieldsMD" && table === `@${executionTable}` && EXECUTION_METADATA_FIELDS.has(executionTable) &&
+          EXECUTION_METADATA_FIELDS.get(executionTable).has(body?.Name)) ||
+        (name === "UserObjectsMD" && ["FBO_GGF_PEXEC","FBO_GGF_PDOC"].includes(table));
+      const postingPlanMetadataWrite = (name === "UserTablesMD" && table === "FBO_GGF_PPLAN") ||
+        (name === "UserFieldsMD" && table === "@FBO_GGF_PPLAN") ||
+        (name === "UserObjectsMD" && table === "FBO_GGF_PPLAN");
       if (localCertificateException && !(name === "UserTablesMD" && table === "FBO_GGF_PPLAN") &&
           !(name === "UserFieldsMD" && table === "@FBO_GGF_PPLAN") &&
-          !(name === "UserObjectsMD" && table === "FBO_GGF_PPLAN"))
-        throw new Error("Unverified certificate mode permits only PPLAN metadata");
+          !(name === "UserObjectsMD" && table === "FBO_GGF_PPLAN") && !executionMetadataWrite)
+        throw new Error("Unverified certificate mode permits only approved GGF posting metadata");
       if (["UserTablesMD","UserFieldsMD","UserObjectsMD"].includes(name) &&
-          typeof table==="string" && /^@?FBO_(?:SETUP|LIC|LOG|GGF_CLOSE|GGF_CLINE|GGF_CLAIM|GGF_CVERS|GGF_PPLAN)$/.test(table))
+          (typeof table==="string" && /^@?FBO_(?:SETUP|LIC|LOG|GGF_CLOSE|GGF_CLINE|GGF_CLAIM|GGF_CVERS|GGF_PPLAN|GGF_PEXEC|GGF_PDOC)$/.test(table)) &&
+          (executionMetadataWrite || postingPlanMetadataWrite || !localCertificateException))
         return request(name,"POST",body);
       if (name==="FBO_SETUP" && ["core","ggf"].includes(body?.Code))return request(name,"POST",body);
       if (name==="FBO_GGF_CLOSE" && body?.Code==="F1CL2609281" && body?.U_Status==="DRAFT")
         return request(name,"POST",body);
       throw new Error("Metadata write outside controlled scope");
+    },
+    postTechnicalExecutionLedger(name,body) {
+      assertNonFinancialTlsScope("PEXEC_PDOC_TECHNICAL_LEDGER");
+      const closingId = body?.U_ClosingId;
+      const executionId = body?.U_ExecutionId ?? (name === "FBO_GGF_CLAIM" ? body?.Code : body?.Code);
+      if (!/^TECH7B-[A-Z0-9-]{8,40}$/.test(String(closingId)) ||
+          !/^F1EX[a-f0-9]{40}$/.test(String(executionId)) ||
+          !/^[a-f0-9]{64}$/.test(String(body?.U_PostingHash)))
+        throw new Error("Technical execution ledger identity outside approved scope");
+      if (name === "FBO_GGF_CLAIM") {
+        if (body.Code !== executionId || body.U_ExecutionId !== executionId || body.U_ClosingId !== closingId ||
+            body.U_Status !== "CLAIMED" || body.U_ClosingVersion !== "1" || body.U_PostingPlanVersion !== "1")
+          throw new Error("Only the isolated Phase 7B test claim may be created");
+      } else if (name === "FBO_GGF_PEXEC") {
+        if (body.Code !== executionId || body.U_ClosingId !== closingId || body.U_Status !== "POSTING_UNCERTAIN" ||
+            body.U_StartedBy !== "TECHNICAL_LEDGER_HOMOLOGATION_NO_FINANCIAL_POST")
+          throw new Error("Only the isolated Phase 7B technical execution may be created");
+      } else if (name === "FBO_GGF_PDOC") {
+        const sequence = Number(body.U_Sequence);
+        const statusAllowed = sequence === 1 ? body.U_Status === "RECONCILED" :
+          sequence === 2 ? body.U_Status === "UNCERTAIN" : sequence === 3 && body.U_Status === "PENDING";
+        let technical;
+        try { technical = body.U_Request ? JSON.parse(body.U_Request).technicalFixture === true : body.U_Status === "PENDING"; }
+        catch { technical = false; }
+        if (typeof body.Code !== "string" || !body.Code.startsWith(`${executionId}D`) || body.U_ExecutionId !== executionId ||
+            body.U_ClosingId !== closingId || body.U_ClosingVersion !== "1" || body.U_PostingPlanVersion !== "1" ||
+            !statusAllowed || !technical)
+          throw new Error("Only the three explicit technical ledger fixtures may be created");
+      } else throw new Error("Execution ledger write outside technical UDO scope");
+      return request(name,"POST",body);
+    },
+    postTechnicalCpvRecord(name, body) {
+      assertNonFinancialTlsScope("PEXEC_PDOC_TECHNICAL_LEDGER");
+      const closingId = String(body?.U_ClosingId ?? body?.Code ?? "");
+      if (!/^TECH7C-[A-Z0-9-]{8,22}$/.test(closingId))
+        throw new Error("Phase 7C technical UDO record has an invalid ClosingId");
+      if (name === "FBO_GGF_PPLAN") {
+        let plan;
+        try { plan = JSON.parse(String(body.U_PlanSnapshot)); } catch { throw new Error("Invalid Phase 7C plan snapshot"); }
+        const document = plan?.documents?.[0];
+        const line = document?.lines?.[0];
+        const expectedCode = `P${createHash("sha256").update(closingId).digest("hex").slice(0,14)}0001`;
+        if (body.Code !== expectedCode || body.U_Status !== "VALIDATED" || body.U_PostingHash !== plan.postingHash ||
+            body.U_PostingPlanVersion !== "1" || body.U_ClosingId !== closingId ||
+            body.U_Version !== "4" ||
+            plan.technicalOnly !== true || plan.companyDB !== AUTHORIZED_COMPANY ||
+            plan.periodStart !== PHASE7C.date || plan.periodEnd !== PHASE7C.date || plan.branch !== "1" ||
+            plan.currency !== PHASE7C.currency || plan.status !== "VALIDATED" || plan.totalCpv !== "100" ||
+            plan.totalGgf !== "100" || plan.totalMod !== "0" || plan.totalStock !== "0" ||
+            plan.totalBlocked !== "0" || plan.totalDifference !== "0" || plan.accountingDifference !== "0" ||
+            plan.totalCpv !== body.U_TotalCpv || plan.totalGgf !== body.U_TotalGgf ||
+            plan.totalMod !== body.U_TotalMod || plan.totalStock !== body.U_TotalStock ||
+            plan.totalBlocked !== body.U_TotalBlocked || plan.accountingDifference !== body.U_AcctDifference ||
+            plan.documents.length !== 1 ||
+            document.type !== "JournalEntry.CPV" || document.totalCents !== "100" ||
+            line.debitAccount !== PHASE7C.debit || line.creditAccount !== PHASE7C.credit ||
+            line.amountCents !== "100" || line.dimensions.length !== 0 || line.payload !== null)
+          throw new Error("PostingPlan is outside the approved isolated CPV scenario");
+        phase7cClosingId = closingId;
+        phase7cPostingHash = plan.postingHash;
+      } else if (name === "FBO_GGF_CLOSE") {
+        if (body.Code !== closingId || body.U_CompanyDB !== AUTHORIZED_COMPANY ||
+            body.U_PeriodStart !== PHASE7C.date || body.U_PeriodEnd !== PHASE7C.date ||
+            body.U_Branch !== String(PHASE7C.branch))
+          throw new Error("Closing header differs from the Phase 7C test identity");
+        phase7cClosingId = closingId;
+      } else if (name === "FBO_GGF_CLINE") {
+        if (closingId !== phase7cClosingId || body.Code !== `${closingId}.00002.0001` ||
+            body.U_Version !== "2" ||
+            body.U_Account !== PHASE7C.debit || body.U_Allocated !== "1.00" || body.U_Revaluation !== "0.00")
+          throw new Error("Closing line is outside the single Phase 7C CPV line");
+      } else if (name === "FBO_GGF_CLAIM") {
+        if (!/^F1EX[a-f0-9]{40}$/.test(String(body.Code)) || body.Code !== body.U_ExecutionId ||
+            body.U_ClosingId !== phase7cClosingId || body.U_ClosingVersion !== "4" ||
+            body.U_PostingPlanVersion !== "1" || body.U_PostingHash !== phase7cPostingHash ||
+            body.U_Status !== "CLAIMED")
+          throw new Error("Financial claim is outside the one approved Phase 7C identity");
+        phase7cExecutionId = body.Code;
+      } else if (name === "FBO_GGF_PEXEC") {
+        if (!phase7cExecutionId && body.U_Status === "READY" && /^F1EX[a-f0-9]{40}$/.test(String(body.Code)))
+          phase7cExecutionId = body.Code;
+        if (!/^F1EX[a-f0-9]{40}$/.test(String(body.Code)) || body.Code !== phase7cExecutionId ||
+            body.U_ClosingId !== phase7cClosingId || body.U_ClosingVersion !== "4" ||
+            body.U_PostingPlanVersion !== "1" || body.U_PostingHash !== phase7cPostingHash ||
+            !["READY","POSTING","POSTING_PARTIAL","POSTING_UNCERTAIN","POSTED","FAILED"].includes(body.U_Status))
+          throw new Error("Execution record is outside the one approved Phase 7C identity");
+      } else if (name === "FBO_GGF_PDOC") {
+        if (!phase7cExecutionId || body.U_ExecutionId !== phase7cExecutionId ||
+            body.U_ClosingId !== phase7cClosingId || body.U_ClosingVersion !== "4" ||
+            body.U_PostingPlanVersion !== "1" || body.U_DocumentType !== "JournalEntry.CPV" ||
+            body.U_PostingHash !== phase7cPostingHash ||
+            body.U_PlannedAmount !== "100" || body.U_Currency !== PHASE7C.currency ||
+            Number(body.U_Sequence) !== 1 || !["PENDING","SENDING","SENT","RECONCILED","UNCERTAIN","FAILED"].includes(body.U_Status))
+          throw new Error("Posting document record is outside the one approved Phase 7C CPV document");
+        if (body.U_Status === "SENDING" && (body.U_AttemptCount !== "1" ||
+            !body.U_AttemptStartedAt || !/^[a-f0-9]{64}$/.test(String(body.U_RequestHash)) ||
+            !body.U_Request || JSON.parse(body.U_Request).Memo !== PHASE7C.memo))
+          throw new Error("SENDING ledger state must persist one hashed attempt before the Journal Entry POST");
+      } else throw new Error("UDO write outside Phase 7C technical ledger scope");
+      if (!phase7cClosingId) phase7cClosingId = closingId;
+      return request(name,"POST",body);
+    },
+    bindTechnicalCpvContext(closingId, executionId, postingHash) {
+      if (!/^TECH7C-[A-Z0-9-]{8,22}$/.test(String(closingId)) ||
+          !/^F1EX[a-f0-9]{40}$/.test(String(executionId)) || !/^[a-f0-9]{64}$/.test(String(postingHash)))
+        throw new Error("Invalid Phase 7C readback identity");
+      phase7cClosingId = closingId;
+      phase7cExecutionId = executionId;
+      phase7cPostingHash = postingHash;
+      return true;
+    },
+    patchTechnicalCpvRecord(path, body) {
+      assertNonFinancialTlsScope("PEXEC_PDOC_TECHNICAL_LEDGER");
+      const match = /^(FBO_GGF_CLOSE|FBO_GGF_CLAIM|FBO_GGF_PEXEC|FBO_GGF_PDOC)\('([^']+)'\)$/.exec(path);
+      if (!match || !phase7cClosingId || Object.keys(body ?? {}).some(key => key !== "Name" && !key.startsWith("U_")))
+        throw new Error("Patch outside Phase 7C technical ledger scope");
+      const [, entity, code] = match;
+      if (entity === "FBO_GGF_CLOSE" && (code !== phase7cClosingId || body.U_CompanyDB !== AUTHORIZED_COMPANY ||
+          body.U_PeriodStart !== PHASE7C.date || body.U_PeriodEnd !== PHASE7C.date || body.U_Branch !== "1"))
+        throw new Error("Closing patch differs from Phase 7C identity");
+      if (entity === "FBO_GGF_CLAIM" && (code !== phase7cExecutionId ||
+          !["POSTING","POSTED","POSTING_UNCERTAIN","FAILED"].includes(body.U_Status)))
+        throw new Error("Claim patch outside Phase 7C status transitions");
+      if (entity === "FBO_GGF_PEXEC" && (code !== phase7cExecutionId || body.U_ClosingId !== phase7cClosingId ||
+          body.U_PostingPlanVersion !== "1" || !["POSTING","POSTED","POSTING_UNCERTAIN","FAILED"].includes(body.U_Status)))
+        throw new Error("Execution patch outside Phase 7C status transitions");
+      if (entity === "FBO_GGF_PDOC" && (code !== `${phase7cExecutionId}D001` || body.U_ClosingId !== phase7cClosingId ||
+          body.U_DocumentType !== "JournalEntry.CPV" || body.U_PlannedAmount !== "100" ||
+          !["PENDING","SENDING","SENT","RECONCILED","UNCERTAIN","FAILED"].includes(body.U_Status)))
+        throw new Error("Document patch outside Phase 7C CPV transitions");
+      if (entity === "FBO_GGF_PDOC" && body.U_Status === "PENDING" &&
+          (body.U_AttemptCount !== "0" || body.U_RequestHash || body.U_Request))
+        throw new Error("A pending document cannot contain a financial attempt");
+      if (entity === "FBO_GGF_CLOSE" && !["CALCULATED","VALIDATED","READY_TO_POST","POSTING","POSTED","POSTING_UNCERTAIN","FAILED"].includes(body.U_Status))
+        throw new Error("Closing status outside Phase 7C lifecycle");
+      return request(path,"PATCH",body);
+    },
+    postTechnicalCpvJournalEntry(body) {
+      if (phase7cFinancialAttempted) throw new Error("Phase 7C already attempted its single Journal Entry POST");
+      const lines = body?.JournalEntryLines;
+      if (!phase7cClosingId || body?.Reference !== phase7cClosingId ||
+          body?.ReferenceDate !== PHASE7C.date || body?.DueDate !== PHASE7C.date || body?.TaxDate !== PHASE7C.date ||
+          body?.Memo !== PHASE7C.memo || !Array.isArray(lines) || lines.length !== 2 ||
+          lines[0]?.AccountCode !== PHASE7C.debit || lines[0]?.Debit !== 1 || lines[0]?.Credit !== 0 ||
+          lines[1]?.AccountCode !== PHASE7C.credit || lines[1]?.Debit !== 0 || lines[1]?.Credit !== 1 ||
+          lines.some(line => line.BPLID !== PHASE7C.branch ||
+            ["CostingCode","CostingCode2","CostingCode3","CostingCode4","CostingCode5","ProjectCode","FCCurrency"].some(key => key in line)))
+        throw new Error("Journal Entry payload differs from the approved Phase 7C one-document scenario");
+      phase7cFinancialAttempted = true;
+      return request("JournalEntries","POST",body);
     },
     postPostingPlan(body) {
       assertNonFinancialTlsScope("PPLAN_SNAPSHOT");

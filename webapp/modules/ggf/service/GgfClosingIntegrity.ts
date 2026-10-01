@@ -1,4 +1,4 @@
-import { assertClosingConsistency, postingHash, type GgfClosing } from "./GgfClosing";
+import { assertClosingConsistency, closingSapDocument, postingHash, type GgfClosing } from "./GgfClosing";
 
 export type ClosingIntegrityStatus = "VALID" | "INTEGRITY_VIOLATION" | "NOT_APPLICABLE";
 
@@ -7,6 +7,7 @@ export interface ClosingIntegrityReport {
   closingId: string;
   version: number;
   closingStatus: string;
+  sapDocumentType: string | null;
   sapDocEntry: number | null;
   sapDocNum: number | null;
   sapTransId: number | null;
@@ -56,15 +57,16 @@ export async function inspectClosingIntegrity(
   const safeContext = safeIntegrityContext(context);
   const fields = new Set<string>();
   let recalculatedHash: string | null = null;
+  const sapDocument = closingSapDocument(closing);
   const postedContent = closing.status === "POSTED" ||
-    (closing.status === "REOPENED" && closing.sapMaterialRevaluationDocEntry !== null);
+    (closing.status === "REOPENED" && sapDocument !== null);
   if (postedContent) {
-    if (!closing.postedAt || !closing.sapMaterialRevaluationDocEntry ||
-        !closing.sapMaterialRevaluationDocNum || !closing.sapJournalTransId)
+    if (!closing.postedAt || !sapDocument)
       fields.add("SapPostingLink");
     if (!claim) fields.add("Claim");
     if (!closing.postingHash) fields.add("PostingHash");
-    if (claim && closing.postingHash !== claim.hash) fields.add("PostingHash/Claim");
+    const boundPlanHash = closing.postingBasis?.postingPlanHash ?? closing.postingHash;
+    if (claim && boundPlanHash !== claim.hash) fields.add("PostingHash/Claim");
     if (claim && closing.version < claim.version + 2) fields.add("Version/Claim");
     if (closing.lineVersion > closing.version || closing.lineVersion < 1) fields.add("LineVersion");
     if (!closing.postingBasis) fields.add("PostingBasis");
@@ -100,7 +102,8 @@ export async function inspectClosingIntegrity(
       try { recalculatedHash = await postingHash(currentFunctionalContent); }
       catch { fields.add("PostingBasis/hashInput"); }
       if (recalculatedHash !== closing.postingHash) fields.add("PostingHash/recalculated");
-      if (claim && recalculatedHash !== claim.hash) fields.add("Claim/recalculated");
+      if (claim && boundPlanHash === closing.postingHash && recalculatedHash !== claim.hash)
+        fields.add("Claim/recalculated");
     }
     try { await assertClosingConsistency(closing); }
     catch { fields.add("Header/Lines/PostingBasis"); }
@@ -109,8 +112,9 @@ export async function inspectClosingIntegrity(
     status: !postedContent ? "NOT_APPLICABLE" : fields.size ? "INTEGRITY_VIOLATION" : "VALID",
     closingId: closing.closingId, version: closing.version,
     closingStatus: closing.status,
-    sapDocEntry: closing.sapMaterialRevaluationDocEntry,
-    sapDocNum: closing.sapMaterialRevaluationDocNum,
+    sapDocumentType: closing.postingBasis?.documentType ?? "MaterialRevaluation",
+    sapDocEntry: sapDocument?.docEntry ?? null,
+    sapDocNum: sapDocument?.docNum ?? null,
     sapTransId: closing.sapJournalTransId,
     originalHash: claim?.hash ?? closing.postingHash, persistedHash: closing.postingHash,
     recalculatedHash, detectedAt: context.now?.() ?? new Date().toISOString(),
