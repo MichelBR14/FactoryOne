@@ -172,6 +172,30 @@
             <StandardListItem title="Versão {v2>version} · {v2>status}" description="{v2>createdAt}" />
           </List>
         </VBox>
+        <Title text="Execução e documentos conciliados" level="H2" titleStyle="H4" class="sapUiLargeMarginTop" />
+        <MessageStrip text="Consulta somente leitura. Não há envio, retomada automática nem botão de contabilização nesta tela." type="Information" showIcon="true" />
+        <HBox wrap="Wrap" alignItems="End" class="sapUiSmallMarginTop sapUiSmallMarginBottom">
+          <VBox class="sapUiSmallMarginEnd"><Label text="ExecutionId" labelFor="executionIdInput"/><Input id="executionIdInput" value="{v2>/executionId}" width="24rem" maxLength="50"/></VBox>
+          <Button text="Consultar SAP" icon="sap-icon://refresh" press=".onLoadExecution" />
+        </HBox>
+        <MessageStrip text="{v2>/executionError}" type="Warning" showIcon="true" visible="{= !!${v2>/executionError} }" />
+        <VBox visible="{= !!${v2>/execution} }" class="sapUiSmallMarginTop">
+          <HBox wrap="Wrap" class="sapUiTinyMarginBottom">
+            <ObjectStatus title="Execução" text="{v2>/execution/executionId}" class="sapUiTinyMarginEnd" />
+            <ObjectStatus title="Status" text="{v2>/execution/statusText}" state="{= ${v2>/execution/status} === 'POSTED' ? 'Success' : (${v2>/execution/status} === 'POSTING_UNCERTAIN' || ${v2>/execution/status} === 'PAYLOAD_INTEGRITY_VIOLATION' ? 'Error' : 'Warning') }" class="sapUiTinyMarginEnd" />
+            <ObjectStatus title="Closing / versão" text="{v2>/execution/identity/closingId} · {v2>/execution/identity/closingVersion}" class="sapUiTinyMarginEnd" />
+            <ObjectStatus title="Plano" text="{v2>/execution/identity/postingPlanVersion}" class="sapUiTinyMarginEnd" />
+            <ObjectStatus title="Integridade SAP" text="{v2>/executionIntegrity}" state="{= ${v2>/executionIntegrity} === 'VALID' ? 'Success' : 'Warning' }" />
+            <ObjectStatus title="Esperado" text="{v2>/execution/totalExpectedText}" class="sapUiTinyMarginEnd" />
+            <ObjectStatus title="Com resposta" text="{v2>/execution/totalPostedText}" class="sapUiTinyMarginEnd" />
+            <ObjectStatus title="Conciliado" text="{v2>/execution/totalReconciledText}" />
+          </HBox>
+          <MessageStrip text="Resultado da contabilização precisa ser reconciliado antes de continuar." type="Error" showIcon="true" visible="{= ${v2>/execution/status} === 'POSTING_UNCERTAIN' }" />
+          <Table items="{v2>/execution/documents}" growing="true" growingScrollToLoad="true" class="sapUiTinyMarginTop">
+            <columns><Column><Text text="Sequência / documento"/></Column><Column hAlign="End"><Text text="Valor planejado"/></Column><Column><Text text="Status"/></Column><Column><Text text="Tentativas / hash"/></Column><Column><Text text="Documento SAP · DocEntry / DocNum / TransId"/></Column><Column><Text text="Conciliação / erro sanitizado"/></Column></columns>
+            <items><ColumnListItem><cells><Text text="{v2>sequence} · {v2>documentType}"/><Text text="{v2>amountText}"/><ObjectStatus text="{v2>statusText}" state="{= ${v2>status} === 'RECONCILED' ? 'Success' : (${v2>status} === 'UNCERTAIN' || ${v2>status} === 'FAILED' ? 'Error' : 'Warning') }"/><Text text="{v2>attemptCount} · {v2>requestHash}" wrapping="true"/><Text text="{v2>sapIdentity}"/><Text text="{v2>reconciliationStatus} · {v2>sanitizedError}" wrapping="true"/></cells></ColumnListItem></items>
+          </Table>
+        </VBox>
       </VBox>
     </content>
   </Page>

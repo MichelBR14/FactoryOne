@@ -6,7 +6,7 @@ const memo = (name: string) => ({ name, description: name, type: "memo" as const
 /** Native SAP UDT/UDO schema. Installation is separate from package build and posting. */
 export const GGF_CLOSING_METADATA: MetadataSet = {
   module: "ggf",
-  version: 3,
+  version: 4,
   tables: [
     { name: "CLOSE", description: "FactoryOne GGF closing", kind: "masterData", fields: [
       alpha("CompanyDB", 50), alpha("PeriodStart", 10), alpha("PeriodEnd", 10),
@@ -28,7 +28,9 @@ export const GGF_CLOSING_METADATA: MetadataSet = {
     ] },
     { name: "CLAIM", description: "F1 GGF posting claim", kind: "masterData", fields: [
       alpha("ClosingId", 50), alpha("PostingHash", 64), alpha("ClaimedAt", 30),
-      alpha("Version", 12)
+      alpha("Version", 12), alpha("ClosingVersion", 12), alpha("PostingPlanVersion", 12),
+      alpha("ExecutionId", 50), alpha("Status", 24), alpha("CreatedAt", 30), alpha("UpdatedAt", 30),
+      alpha("ClaimedBy", 50)
     ] },
     { name: "CVERS", description: "F1 GGF closing version", kind: "masterData", fields: [
       alpha("ClosingId", 50), alpha("Version", 12), alpha("LineVersion", 12),
@@ -41,6 +43,22 @@ export const GGF_CLOSING_METADATA: MetadataSet = {
       alpha("Status", 20), alpha("TotalMod", 30), alpha("TotalGgf", 30),
       alpha("TotalStock", 30), alpha("TotalCpv", 30), alpha("TotalBlocked", 30),
       alpha("AcctDifference", 30), memo("PlanSnapshot")
+    ] },
+    { name: "PEXEC", description: "F1 GGF posting execution", kind: "masterData", fields: [
+      alpha("ClosingId", 50), alpha("ClosingVersion", 12), alpha("PostingPlanVersion", 12),
+      alpha("PostingHash", 64), alpha("Status", 24), alpha("StartedAt", 30), alpha("FinishedAt", 30),
+      alpha("StartedBy", 50), memo("LastError"), alpha("TotalExpected", 30),
+      alpha("TotalPosted", 30), alpha("TotalReconciled", 30), alpha("DocumentCount", 8)
+    ] },
+    { name: "PDOC", description: "F1 GGF posting document ledger", kind: "masterData", fields: [
+      alpha("ExecutionId", 50), alpha("ClosingId", 50), alpha("ClosingVersion", 12),
+      alpha("PostingPlanVersion", 12), alpha("PostingHash", 64), alpha("Sequence", 8),
+      alpha("DocumentType", 40), alpha("PlannedAmount", 30), alpha("Currency", 3),
+      alpha("Status", 16), alpha("RequestHash", 64), memo("Request"), memo("Response"), memo("Dependencies"),
+      alpha("AttemptCount", 8), alpha("AttemptStartedAt", 30), alpha("ResponseReceivedAt", 30),
+      alpha("SapDocEntry", 20), alpha("SapDocNum", 20), alpha("SapTransId", 20),
+      alpha("ReconciledAt", 30), alpha("ReconStatus", 20), memo("SanitizedError"),
+      memo("AttemptHistory")
     ] }
   ],
   objects: [
@@ -48,6 +66,8 @@ export const GGF_CLOSING_METADATA: MetadataSet = {
     { table: "CLINE", name: "FactoryOne GGF closing line", kind: "masterData", canDelete: false, applyAuthorization: true },
     { table: "CLAIM", name: "FactoryOne GGF posting claim", kind: "masterData", canDelete: false, applyAuthorization: true },
     { table: "CVERS", name: "FactoryOne GGF closing version", kind: "masterData", canDelete: false, applyAuthorization: true },
-    { table: "PPLAN", name: "FactoryOne GGF posting plan", kind: "masterData", canDelete: false, applyAuthorization: true }
+    { table: "PPLAN", name: "FactoryOne GGF posting plan", kind: "masterData", canDelete: false, applyAuthorization: true },
+    { table: "PEXEC", name: "FactoryOne GGF posting execution", kind: "masterData", canDelete: false, applyAuthorization: true },
+    { table: "PDOC", name: "FactoryOne GGF posting document ledger", kind: "masterData", canDelete: false, applyAuthorization: true }
   ]
 };

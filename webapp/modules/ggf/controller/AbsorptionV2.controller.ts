@@ -41,7 +41,8 @@ export default class AbsorptionV2 extends Controller {
       summary: [], completeness: [], evidence: "", distribution: null, distributionCategories: [],
       distributionOrders: [], distributionBases: [], distributionWarnings: [], postingPlan: null,
       postingPlanHistory: [], postingPlanError: null, postingPlanSource: "SAP", postingPlanIntegrity: "NOT_VERIFIED",
-      stockConsumptionOrders: [], fifoScenario: null, accountingPreview: null, technicalAccountingPreview: null
+      stockConsumptionOrders: [], fifoScenario: null, accountingPreview: null, technicalAccountingPreview: null,
+      executionId: "", execution: null, executionError: null, executionIntegrity: "NOT_VERIFIED"
     }), "v2");
     void this.loadPersistedPostingPlan();
   }
@@ -69,6 +70,54 @@ export default class AbsorptionV2 extends Controller {
       model.setProperty("/postingPlanError", error instanceof Error && error.message === "SAP_METADATA_UNAVAILABLE"
         ? "Metadados do plano indisponíveis no SAP. O estado não foi validado e a persistência permanece bloqueada."
         : "Não foi possível reler o plano diretamente do SAP. Nenhum dado local foi usado como substituto.");
+    }
+  }
+
+  public async onLoadExecution(): Promise<void> {
+    const model = this.getView()!.getModel("v2") as JSONModel;
+    const executionId = String(model.getProperty("/executionId") ?? "").trim();
+    if (!/^F1EX[a-f0-9]{40}$/.test(executionId)) {
+      MessageBox.error("Informe um ExecutionId válido.");
+      return;
+    }
+    model.setProperty("/execution", null);
+    model.setProperty("/executionError", null);
+    model.setProperty("/executionIntegrity", "NOT_VERIFIED");
+    try {
+      const response = await fetch(`/__ggf/v2/execution?executionId=${encodeURIComponent(executionId)}`, {
+        headers: { "X-FactoryOne-Read": "1" }, credentials: "same-origin", cache: "no-store"
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.code ?? "POSTING_EXECUTION_READ_FAILED");
+      const execution = body.execution as Record<string, unknown>;
+      const statusLabels: Record<string, string> = {
+        READY: "Pronta", POSTING: "Em processamento", POSTING_PARTIAL: "Parcial",
+        POSTING_UNCERTAIN: "Resultado incerto", POSTED: "Concluída", FAILED: "Falhou",
+        PAYLOAD_INTEGRITY_VIOLATION: "Integridade do payload violada"
+      };
+      const documentLabels: Record<string, string> = {
+        PENDING: "Pendente", SENDING: "Enviando", SENT: "Enviado; aguarda conciliação",
+        UNCERTAIN: "Incerto; exige conciliação", RECONCILED: "Conciliado", FAILED: "Falhou"
+      };
+      const formatExecutionAmount = (value: unknown, currency: unknown) => {
+        const code = typeof currency === "string" && /^[A-Z]{3}$/.test(currency) ? currency : "BRL";
+        const formatter = new Intl.NumberFormat("pt-BR", { style: "currency", currency: code });
+        return formatter.format(Number(BigInt(String(value))) / 100);
+      };
+      const documents = (execution.documents as Array<Record<string, unknown>>).map(document => ({
+        ...document, statusText: documentLabels[String(document.status)] ?? String(document.status),
+        amountText: formatExecutionAmount(document.plannedAmount, document.currency),
+        sapIdentity: [document.sapDocEntry, document.sapDocNum, document.sapTransId].filter(value => value != null).join(" / ") || "—"
+      }));
+      model.setProperty("/execution", { ...execution, statusText: statusLabels[String(execution.status)] ?? String(execution.status),
+        totalExpectedText: formatExecutionAmount(execution.totalExpected, "BRL"),
+        totalPostedText: formatExecutionAmount(execution.totalPosted, "BRL"),
+        totalReconciledText: formatExecutionAmount(execution.totalReconciled, "BRL"), documents });
+      model.setProperty("/executionIntegrity", body.integrityVerified === true ? "VALID" : "NOT_VERIFIED");
+    } catch (error) {
+      model.setProperty("/executionError", error instanceof Error && error.message === "SAP_EXECUTION_METADATA_UNAVAILABLE"
+        ? "Ledger de execução ainda não instalado/homologado no SAP. Nenhum dado local substituiu a leitura."
+        : "Não foi possível verificar a execução diretamente no SAP.");
     }
   }
 

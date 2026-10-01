@@ -101,7 +101,8 @@ async function run(operation) {
   const plans=[];
   for (const set of sets) {
     const plan=await installer.plan(set);
-    plans.push({module:set.module,version:plan.version,actions:plan.actions.length,warnings:plan.warnings});
+    plans.push({module:set.module,version:plan.version,actions:plan.actions.length,
+      actionDetails:plan.actions.map(action=>action.description),warnings:plan.warnings});
     if (plan.warnings.length && operation!=="plan")
       throw new Error(`Metadata divergence for ${set.module}: ${plan.warnings.join(" | ")}`);
   }

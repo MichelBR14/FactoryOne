@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readClosingIntegrity, readSap, readV2Absorption, readV2AbsorptionDistribution,
-  readPersistedPostingPlan, persistBlockedPostingPlan, SapMetadataUnavailableError } from "./ggf-sap-runtime.mjs";
+  readPersistedPostingPlan, readPostingExecution, persistBlockedPostingPlan, SapMetadataUnavailableError } from "./ggf-sap-runtime.mjs";
 
 const port = Number(process.env.FBO_PREVIEW_PORT ?? 8082);
 const ui5Port = Number(process.env.FBO_UI5_PORT ?? 8081);
@@ -18,10 +18,30 @@ const server = createServer(async (request, response) => {
   if (![`localhost:${port}`, `127.0.0.1:${port}`].includes(host))
     return reply(403, { error: "Local host required" });
   const url = new URL(request.url, `http://${host}`);
-  const postingPlanPath = ["/__ggf/v2/posting-plan", "/__ggf/v2/posting-plan/persist"].includes(new URL(request.url, `http://${host}`).pathname);
+  const postingPlanPath = ["/__ggf/v2/posting-plan", "/__ggf/v2/posting-plan/persist"].includes(url.pathname);
   if (!["GET", "HEAD"].includes(request.method) && !(postingPlanPath && request.method === "POST"))
     return reply(405, { error: "Read only outside the blocked technical posting-plan snapshot" });
   if (url.pathname.startsWith("/__ggf/")) {
+    if (url.pathname === "/__ggf/v2/execution") {
+      if (request.method !== "GET" || request.headers["x-factoryone-read"] !== "1" ||
+          (request.headers.origin && request.headers.origin !== `http://${host}`) ||
+          (request.headers["sec-fetch-site"] && !["same-origin", "none"].includes(request.headers["sec-fetch-site"])))
+        return reply(403, { error: "Same-origin explicit read opt-in required" });
+      const executionId = url.searchParams.get("executionId");
+      if ([...url.searchParams.keys()].some(key => key !== "executionId") ||
+          url.searchParams.getAll("executionId").length !== 1 || !/^F1EX[a-f0-9]{40}$/.test(executionId ?? ""))
+        return reply(400, { error: "Invalid ExecutionId" });
+      if (reading) return reply(409, { error: "A SAP operation is already running" });
+      reading = true;
+      try {
+        const result = await readPostingExecution(executionId);
+        reply(result.execution ? 200 : 404, result);
+      } catch (error) {
+        reply(error?.code === "SAP_EXECUTION_METADATA_UNAVAILABLE" ? 503 : 502,
+          { code: error?.code ?? "POSTING_EXECUTION_READ_FAILED", error: "Execution ledger was not verified from SAP" });
+      } finally { reading = false; }
+      return;
+    }
     if (url.pathname === "/__ggf/v2/posting-plan" || url.pathname === "/__ggf/v2/posting-plan/persist") {
       const isPersist = url.pathname.endsWith("/persist");
       if ((isPersist && request.method !== "POST") || (!isPersist && request.method !== "GET"))

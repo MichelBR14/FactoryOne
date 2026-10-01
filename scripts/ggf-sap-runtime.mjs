@@ -46,6 +46,13 @@ const { SapGgfPostingPlanRepository, SapPostingPlanMetadataUnavailableError,
   buildAccountingPreview, buildGgfPostingPlanDraft, technicalPostingPlanId } =
   await import(pathToFileURL(resolve(postingPlanOutput)).href);
 
+const postingExecutionOutput = ".local/ggf/posting-execution-runtime.mjs";
+await build({ stdin: { contents: `
+export { SapGgfPostingExecutionRepository, SapGgfExecutionMetadataUnavailableError } from "./webapp/modules/ggf/repository/SapGgfPostingExecutionRepository.ts";
+`, resolveDir: process.cwd() }, outfile: postingExecutionOutput, platform: "node", format: "esm", bundle: true });
+const { SapGgfPostingExecutionRepository, SapGgfExecutionMetadataUnavailableError } =
+  await import(pathToFileURL(resolve(postingExecutionOutput)).href);
+
 function postingPlanClient(session, write = false) {
   const unwrap = (response) => {
     if (!response.ok) throw new ServiceLayerError("SAP posting plan request rejected", response.status,
@@ -70,6 +77,29 @@ export async function readPersistedPostingPlan(closingId) {
     const versions = await repository.list(closingId);
     return { company: session.info.company, closingId, versions, latest: versions.at(-1) ?? null,
       integrityVerified: true, source: "SAP" };
+  } finally { await session.close(); }
+}
+
+export async function readPostingExecution(executionId) {
+  if (!/^F1EX[a-f0-9]{40}$/.test(executionId)) throw new Error("Invalid ExecutionId");
+  const session = await openReadSession();
+  try {
+    const client = {
+      async get(path) {
+        const response = await session.get(path, { Prefer: "odata.maxpagesize=100" });
+        if (!response.ok) throw new ServiceLayerError("SAP execution ledger read rejected", response.status,
+          response.errorCode, response.errorMessage);
+        return response.data;
+      },
+      async post() { throw new Error("Posting execution read-only client rejects writes"); },
+      async patch() { throw new Error("Posting execution read-only client rejects writes"); }
+    };
+    const execution = await new SapGgfPostingExecutionRepository(client).get(executionId);
+    return { company: session.info.company, execution, integrityVerified: execution !== null, source: "SAP" };
+  } catch (error) {
+    if (error?.code === "SAP_EXECUTION_METADATA_UNAVAILABLE" || error instanceof SapGgfExecutionMetadataUnavailableError)
+      throw error;
+    throw error;
   } finally { await session.close(); }
 }
 

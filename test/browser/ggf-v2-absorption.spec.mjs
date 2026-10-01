@@ -71,6 +71,25 @@ for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${widt
     savedPlan = { ...draft, version: 1, createdAt: "2026-09-30T20:00:00.000Z", postingHash: "a".repeat(64) };
     return route.fulfill({ json: { source: "SAP", integrityVerified: true, versions: [savedPlan], latest: savedPlan } });
   });
+  const executionId = `F1EX${"b".repeat(40)}`;
+  await page.route("**/__ggf/v2/execution?*", (route) => {
+    expect(route.request().method()).toBe("GET");
+    expect(route.request().headers()["x-factoryone-read"]).toBe("1");
+    return route.fulfill({ json: { source: "SAP", integrityVerified: true, execution: {
+      executionId, identity: { closingId: "TECH_LEDGER", closingVersion: 2, postingPlanVersion: 1,
+        postingHash: "c".repeat(64) }, status: "POSTING_UNCERTAIN", startedAt: "2026-10-01T10:00:00Z",
+      totalExpected: "30000", totalPosted: "10000", totalReconciled: "10000", documents: [
+        { sequence: 1, documentType: "MaterialRevaluation", plannedAmount: "10000", currency: "BRL",
+          status: "RECONCILED", attemptCount: 1, requestHash: "d".repeat(64), sapDocEntry: 22, sapDocNum: 23,
+          sapTransId: 24, reconciliationStatus: "MATCHED", sanitizedError: null },
+        { sequence: 2, documentType: "JournalEntry.CPV", plannedAmount: "10000", currency: "BRL",
+          status: "UNCERTAIN", attemptCount: 1, requestHash: "e".repeat(64), sapDocEntry: null, sapDocNum: null,
+          sapTransId: null, reconciliationStatus: "NO_MATCH", sanitizedError: "RECONCILIATION_NOT_UNIQUE" },
+        { sequence: 3, documentType: "JournalEntry.Closing", plannedAmount: "10000", currency: "BRL",
+          status: "PENDING", attemptCount: 0, requestHash: null, sapDocEntry: null, sapDocNum: null,
+          sapTransId: null, reconciliationStatus: "NOT_RUN", sanitizedError: null }
+      ] } } });
+  });
   await page.goto("/index.html?mode=development&source=sap-read#/ggf/fechamento");
   await page.getByRole("button", { name: "GGF V2 / Apuração" }).click();
   await expect(page).toHaveURL(/#\/ggf\/v2\/apuracao$/);
@@ -109,6 +128,11 @@ for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${widt
   await expect(page.getByText("Hash funcional conferido na releitura; disponível na auditoria técnica.")).toBeVisible();
   await expect(page.getByText(/Hash conferido após releitura SAP/)).toBeVisible();
   await expect(page.getByText("Bloqueado", { exact: true }).last()).toBeVisible();
+  await page.locator("#executionIdInput-inner").fill(executionId);
+  await page.getByRole("button", { name: "Consultar SAP" }).click();
+  await expect(page.getByText("Resultado da contabilização precisa ser reconciliado antes de continuar.")).toBeVisible();
+  await expect(page.getByText("Incerto; exige conciliação")).toBeVisible();
+  await expect(page.getByText("22 / 23 / 24")).toBeVisible();
   await page.getByRole("button", { name: "Voltar ao menu GGF" }).last().click();
   await expect(page).toHaveURL(/#\/ggf$/);
   expect(errors).toEqual([]);

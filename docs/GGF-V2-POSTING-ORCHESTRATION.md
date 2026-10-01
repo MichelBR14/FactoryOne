@@ -53,7 +53,9 @@ Nao se fabricam documentos vazios. Um efeito criado nunca e apagado nem recriado
 
 ## Persistencia SAP ainda necessaria
 
-O contrato `GgfPostingOrchestrationStore` documenta os limites do adaptador: leitura autoritativa, claim unico por `ClosingId`, transicao compare-and-set do header e snapshots append-only da execucao. O adaptador SAP ainda nao foi ligado porque o schema atual nao registra `PostingPlanVersion` no claim nem uma colecao completa de documentos e respostas no fechamento. Antes de instalar/alterar metadata, implementar e testar um arquivo append-only de execucao que guarde `ClosingId`, versoes, hash, claim, status e documentos; depois instalar de forma idempotente, verificar exposicao multi-node e comprovar releitura em sessao nova.
+O contrato `GgfPostingOrchestrationStore` documenta leitura autoritativa, claim, transicao compare-and-set do header e snapshots da execucao. Na Fase 7B, claim passa a usar a identidade composta `ClosingId + ClosingVersion + PostingPlanVersion + PostingHash`, com `ExecutionId` deterministico. O ledger foi separado em `FBO_GGF_PEXEC` e `FBO_GGF_PDOC`; veja [GGF-V2-POSTING-EXECUTION-LEDGER.md](GGF-V2-POSTING-EXECUTION-LEDGER.md). Claims antigas por ClosingId permanecem intactas e bloqueiam uma tentativa nova ate reconciliacao explicita.
+
+Foi executado somente o plano de metadata em leitura na `SBODEMOBR2`: 48 acoes aditivas para os novos campos e os dois UDOs, sem divergencias. Nenhuma acao foi instalada. A prova persistente SAP esta aguardando aprovacao da estrutura e instalacao controlada; nenhum POST financeiro foi executado.
 
 O `SapGgfClosingRepository` e o `SapGgfPostingPlanRepository` existentes nao sao combinados implicitamente: o primeiro suporta uma ligacao simples de MaterialRevaluation; o segundo guarda snapshots bloqueados e imutaveis. O orquestrador novo nao chama nenhum deles para escrita financeira.
 

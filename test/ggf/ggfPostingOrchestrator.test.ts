@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildAccountingPreview, type AccountingPreviewLineInput } from "../../webapp/modules/ggf/service/AccountingPreview";
 import { buildGgfPostingPlanDraft, calculateGgfPostingPlanHash, type GgfPostingPlan,
   type GgfPostingPlanDocument } from "../../webapp/modules/ggf/service/GgfPostingPlan";
+import { calculateGgfExecutionId } from "../../webapp/modules/ggf/service/GgfPostingExecution";
 import { DefiniteGgfDocumentRejection, GgfPostingOrchestrator, type GgfPostingClaim,
   type GgfPostingDocumentGateway, type GgfPostingExecution, type GgfPostingOrchestrationStore,
   type GgfDocumentPostingResult, type PersistedGgfPostingBundle } from "../../webapp/modules/ggf/service/GgfPostingOrchestrator";
@@ -47,13 +48,23 @@ class MemoryOrchestrationStore implements GgfPostingOrchestrationStore {
       closingIntegrity: "NOT_APPLICABLE", plan: structuredClone(this.plan), planReadbackHash: this.plan.postingHash,
       metadataAvailable: true, homologatedValuationMethods: ["bis_FIFO"], companyDB: "SBODEMOBR2", user: actor };
   }
-  async getClaim() { return this.claimValue ? structuredClone(this.claimValue) : null; }
+  async getClaim(_executionId: string) { return this.claimValue ? structuredClone(this.claimValue) : null; }
+  async findExecution(executionId: string) {
+    const found = [...this.executions].reverse().find(row => row.executionId === executionId);
+    return found ? structuredClone(found) : null;
+  }
   async claim(claim: GgfPostingClaim) {
     if (this.claimValue) throw new Error("SAP Code conflict");
     this.claimValue = structuredClone(claim);
   }
+  async updateClaim(_executionId: string, status: GgfPostingExecution["status"], updatedAt: string) {
+    if (this.claimValue) this.claimValue = { ...this.claimValue, status, updatedAt };
+  }
   async append(execution: GgfPostingExecution) { this.executions.push(structuredClone(execution)); }
-  async latest() { return structuredClone(this.executions.at(-1) ?? null); }
+  async latest(executionId: string) {
+    const found = [...this.executions].reverse().find(row => row.executionId === executionId);
+    return found ? structuredClone(found) : null;
+  }
   async transitionClosing(input: { expectedVersion: number; expectedStatus: string; status: GgfPostingExecution["status"] }) {
     if (input.expectedVersion !== this.lifecycleVersion || input.expectedStatus !== this.closingStatus)
       throw new Error("stale closing");
@@ -68,9 +79,13 @@ class MemoryDocumentGateway implements GgfPostingDocumentGateway {
   failAt: number | null = null;
   uncertainAt: number | null = null;
   found = true;
+  alterPayload = false;
+  failPrepare = false;
   async prepare(document: GgfPostingPlanDocument) {
+    if (this.failPrepare) throw new Error("invalid local proposal");
     return { expectedCents: document.totalCents,
-      payload: { Comments: `FactoryOne GGF ${closingId}`, type: document.type, total: document.totalCents,
+      payload: { Comments: `FactoryOne GGF ${closingId}`, type: document.type,
+        total: this.alterPayload ? `${document.totalCents}-changed` : document.totalCents,
         AuthCookie: "must-not-persist" } };
   }
   async post(documentType: GgfPostingPlanDocument["type"]): Promise<GgfDocumentPostingResult> {
@@ -127,15 +142,26 @@ describe("GGF posting orchestration (offline; no SAP financial POST)", () => {
     expect(gateway.posts).toEqual(expectedOrder);
     expect(store.claimValue).toMatchObject({ closingId, postingHash: store.plan.postingHash,
       closingVersion: 7, postingPlanVersion: 1 });
-    expect(result.documents.every(document => document.status === "POSTED" && document.reconciliation === "MATCHED")).toBe(true);
+    expect(result.documents.every(document => document.status === "RECONCILED" && document.reconciliation === "MATCHED")).toBe(true);
     expect(JSON.stringify(store.executions)).not.toContain("must-not-persist");
   });
 
   it("a pre-existing claim never reposts and stays uncertain when reconciliation finds no document", async () => {
     const { store, gateway, service } = await fixture();
-    store.claimValue = { closingId, postingHash: store.plan.postingHash, closingVersion: 7,
-      postingPlanVersion: 1, claimedAt: time, claimedBy: actor };
+    const identity = { closingId, postingHash: store.plan.postingHash, closingVersion: 7, postingPlanVersion: 1 };
+    store.claimValue = { ...identity, executionId: await calculateGgfExecutionId(identity), status: "CLAIMED",
+      updatedAt: time, claimedAt: time, claimedBy: actor };
     gateway.found = false;
+    const result = await service.post(closingId, 1);
+    expect(result.status).toBe("POSTING_UNCERTAIN");
+    expect(gateway.posts).toEqual([]);
+  });
+
+  it("does not treat a claim for the wrong posting-plan version as this execution's claim", async () => {
+    const { store, gateway, service } = await fixture();
+    const identity = { closingId, postingHash: store.plan.postingHash, closingVersion: 7, postingPlanVersion: 1 };
+    store.claimValue = { ...identity, executionId: await calculateGgfExecutionId(identity), status: "CLAIMED",
+      updatedAt: time, claimedAt: time, claimedBy: actor, postingPlanVersion: 2 };
     const result = await service.post(closingId, 1);
     expect(result.status).toBe("POSTING_UNCERTAIN");
     expect(gateway.posts).toEqual([]);
@@ -150,8 +176,18 @@ describe("GGF posting orchestration (offline; no SAP financial POST)", () => {
     second.gateway.failAt = 1;
     const result = await second.service.post(closingId, 1);
     expect(result.status).toBe("POSTING_PARTIAL");
-    expect(result.documents[0]?.status).toBe("POSTED");
+    expect(result.documents[0]?.status).toBe("RECONCILED");
     expect(result.documents[1]?.status).toBe("FAILED");
+    expect(second.gateway.posts).toHaveLength(2);
+  });
+
+  it("records a preparation failure before any gateway POST", async () => {
+    const { gateway, service } = await fixture();
+    gateway.failPrepare = true;
+    const result = await service.post(closingId, 1);
+    expect(result.status).toBe("FAILED");
+    expect(result.documents[0]).toMatchObject({ status: "FAILED", attemptCount: 0, requestHash: null });
+    expect(gateway.posts).toEqual([]);
   });
 
   it("timeout after dispatch reconciles the created document, preserves partial state and never resends", async () => {
@@ -161,12 +197,32 @@ describe("GGF posting orchestration (offline; no SAP financial POST)", () => {
     expect(pending.status).toBe("POSTING_UNCERTAIN");
     const count = gateway.posts.length;
     gateway.uncertainAt = null;
-    const recovered = await service.reconcile(closingId, 1);
+    const recovered = await service.resumeExecution(pending.executionId);
     expect(recovered.status).toBe("POSTING_PARTIAL");
-    expect(recovered.documents[0]).toMatchObject({ status: "POSTED", reconciliation: "MATCHED", docEntry: 100 });
+    expect(recovered.documents[0]).toMatchObject({ status: "RECONCILED", reconciliation: "MATCHED", docEntry: 100 });
     expect(recovered.documents[1]?.status).toBe("PENDING");
     expect(gateway.posts).toHaveLength(count);
     expect(store.claimValue).not.toBeNull();
+  });
+
+  it("blocks resume when the reconstructed request hash differs and never resends", async () => {
+    const { gateway, service } = await fixture();
+    gateway.uncertainAt = 0;
+    const pending = await service.post(closingId, 1);
+    const postCount = gateway.posts.length;
+    gateway.alterPayload = true;
+    const recovered = await service.resumeExecution(pending.executionId);
+    expect(recovered.status).toBe("PAYLOAD_INTEGRITY_VIOLATION");
+    expect(gateway.posts).toHaveLength(postCount);
+  });
+
+  it("returns an already completed execution without reposting reconciled documents", async () => {
+    const { gateway, service } = await fixture();
+    const posted = await service.post(closingId, 1);
+    const count = gateway.posts.length;
+    const resumed = await service.resumeExecution(posted.executionId);
+    expect(resumed.status).toBe("POSTED");
+    expect(gateway.posts).toHaveLength(count);
   });
 
   it("rejects a second prepare after a persisted execution and blocks a posted closing", async () => {
