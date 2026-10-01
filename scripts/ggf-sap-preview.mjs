@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { readClosingIntegrity, readSap, readV2Absorption, readV2AbsorptionDistribution, SapMetadataUnavailableError } from "./ggf-sap-runtime.mjs";
+import { readClosingIntegrity, readSap, readV2Absorption, readV2AbsorptionDistribution,
+  readPersistedPostingPlan, persistBlockedPostingPlan, SapMetadataUnavailableError } from "./ggf-sap-runtime.mjs";
 
 const port = Number(process.env.FBO_PREVIEW_PORT ?? 8082);
 const ui5Port = Number(process.env.FBO_UI5_PORT ?? 8081);
@@ -17,8 +18,62 @@ const server = createServer(async (request, response) => {
   if (![`localhost:${port}`, `127.0.0.1:${port}`].includes(host))
     return reply(403, { error: "Local host required" });
   const url = new URL(request.url, `http://${host}`);
-  if (!["GET", "HEAD"].includes(request.method)) return reply(405, { error: "Read only" });
+  const postingPlanPath = ["/__ggf/v2/posting-plan", "/__ggf/v2/posting-plan/persist"].includes(new URL(request.url, `http://${host}`).pathname);
+  if (!["GET", "HEAD"].includes(request.method) && !(postingPlanPath && request.method === "POST"))
+    return reply(405, { error: "Read only outside the blocked technical posting-plan snapshot" });
   if (url.pathname.startsWith("/__ggf/")) {
+    if (url.pathname === "/__ggf/v2/posting-plan" || url.pathname === "/__ggf/v2/posting-plan/persist") {
+      const isPersist = url.pathname.endsWith("/persist");
+      if ((isPersist && request.method !== "POST") || (!isPersist && request.method !== "GET"))
+        return reply(405, { error: "Method not allowed" });
+      const optIn = isPersist ? request.headers["x-factoryone-plan-write"] === "1"
+        : request.headers["x-factoryone-read"] === "1";
+      if (!optIn || (request.headers.origin && request.headers.origin !== `http://${host}`) ||
+          (request.headers["sec-fetch-site"] && !["same-origin", "none"].includes(request.headers["sec-fetch-site"])))
+        return reply(403, { error: "Same-origin explicit opt-in required" });
+      if (isPersist) {
+        let raw = "";
+        for await (const chunk of request) {
+          raw += chunk;
+          if (raw.length > 60000) return reply(413, { error: "Technical snapshot exceeds preview limit" });
+        }
+        let draft;
+        try { draft = JSON.parse(raw); } catch { return reply(400, { error: "Invalid posting plan snapshot" }); }
+        if (reading) return reply(409, { error: "A SAP operation is already running" });
+        reading = true;
+        try {
+          const result = await persistBlockedPostingPlan(draft);
+          reply(200, result);
+        } catch (error) {
+          if (error?.code === "SAP_METADATA_UNAVAILABLE" || error instanceof SapMetadataUnavailableError)
+            reply(503, { code: "SAP_METADATA_UNAVAILABLE", postingBlocked: true,
+              error: "Metadados do plano GGF indisponíveis; snapshot não confirmado." });
+          else if (error?.code === "POSTING_PLAN_WRITE_UNCERTAIN")
+            reply(409, { code: error.code, postingBlocked: true,
+              error: "Estado da gravação incerto. Releia o plano SAP antes de qualquer nova tentativa." });
+          else if (error?.code === "POSTING_PLAN_VERSION_CONFLICT")
+            reply(409, { code: error.code, postingBlocked: true, error: "A versão foi criada por outra sessão; releia o SAP." });
+          else reply(502, { error: "O snapshot técnico não foi confirmado. Nenhum documento financeiro foi enviado." });
+        } finally { reading = false; }
+        return;
+      }
+      if ([...url.searchParams.keys()].some(key => key !== "closingId") ||
+          url.searchParams.getAll("closingId").length !== 1 ||
+          !/^[A-Za-z0-9_-]{1,30}$/.test(url.searchParams.get("closingId")))
+        return reply(400, { error: "Invalid ClosingId" });
+      if (reading) return reply(409, { error: "A SAP operation is already running" });
+      reading = true;
+      try {
+        const result = await readPersistedPostingPlan(url.searchParams.get("closingId"));
+        reply(200, result);
+      } catch (error) {
+        if (error?.code === "SAP_METADATA_UNAVAILABLE")
+          reply(503, { code: "SAP_METADATA_UNAVAILABLE", postingBlocked: true,
+            error: "Metadados do plano GGF indisponíveis; estado SAP não verificado." });
+        else reply(502, { error: "Leitura do plano interrompida; estado SAP não verificado." });
+      } finally { reading = false; }
+      return;
+    }
     if (!["/__ggf/read", "/__ggf/closing-integrity", "/__ggf/v2/absorption", "/__ggf/v2/distribution"].includes(url.pathname) || request.method !== "GET")
       return reply(404, { error: "Unknown read" });
     if (

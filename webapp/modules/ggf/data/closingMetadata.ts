@@ -6,7 +6,7 @@ const memo = (name: string) => ({ name, description: name, type: "memo" as const
 /** Native SAP UDT/UDO schema. Installation is separate from package build and posting. */
 export const GGF_CLOSING_METADATA: MetadataSet = {
   module: "ggf",
-  version: 2,
+  version: 3,
   tables: [
     { name: "CLOSE", description: "FactoryOne GGF closing", kind: "masterData", fields: [
       alpha("CompanyDB", 50), alpha("PeriodStart", 10), alpha("PeriodEnd", 10),
@@ -34,12 +34,20 @@ export const GGF_CLOSING_METADATA: MetadataSet = {
       alpha("ClosingId", 50), alpha("Version", 12), alpha("LineVersion", 12),
       alpha("PostingHash", 64), memo("PostingBasis"), alpha("Status", 20),
       alpha("RecordedAt", 30), alpha("TechnicalOnly", 5)
+    ] },
+    { name: "PPLAN", description: "F1 GGF Plan", kind: "masterData", fields: [
+      alpha("ClosingId", 50), alpha("Version", 12), alpha("PostingPlanVersion", 12),
+      alpha("PostingHash", 64), alpha("CreatedAt", 30), alpha("CreatedBy", 50),
+      alpha("Status", 20), alpha("TotalMod", 30), alpha("TotalGgf", 30),
+      alpha("TotalStock", 30), alpha("TotalCpv", 30), alpha("TotalBlocked", 30),
+      alpha("AcctDifference", 30), memo("PlanSnapshot")
     ] }
   ],
   objects: [
     { table: "CLOSE", name: "FactoryOne GGF closing", kind: "masterData", canDelete: false, applyAuthorization: true },
     { table: "CLINE", name: "FactoryOne GGF closing line", kind: "masterData", canDelete: false, applyAuthorization: true },
     { table: "CLAIM", name: "FactoryOne GGF posting claim", kind: "masterData", canDelete: false, applyAuthorization: true },
-    { table: "CVERS", name: "FactoryOne GGF closing version", kind: "masterData", canDelete: false, applyAuthorization: true }
+    { table: "CVERS", name: "FactoryOne GGF closing version", kind: "masterData", canDelete: false, applyAuthorization: true },
+    { table: "PPLAN", name: "FactoryOne GGF posting plan", kind: "masterData", canDelete: false, applyAuthorization: true }
   ]
 };

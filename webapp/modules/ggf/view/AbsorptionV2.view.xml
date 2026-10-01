@@ -135,8 +135,10 @@
           <List items="{v2>/blockers}"><StandardListItem title="{v2>text}" icon="sap-icon://message-warning"/></List>
         </VBox>
         <Title text="7. Plano de Contabilização" level="H2" titleStyle="H4" class="sapUiLargeMarginTop" />
-        <MessageStrip text="O plano técnico é append-only neste navegador, com hash e releitura local. Ele não foi persistido no SAP: a SBODEMOBR2 permanece somente leitura. Nenhum claim ou documento financeiro é criado." type="Warning" showIcon="true" />
+        <MessageStrip text="Este plano técnico bloqueado é persistido no UDO versionado do SAP e relido em uma nova sessão. A operação não cria claim nem documento financeiro; nenhuma contabilização está habilitada." type="Warning" showIcon="true" />
         <MessageStrip text="{v2>/postingPlanError}" type="Error" showIcon="true" visible="{= !!${v2>/postingPlanError} }" />
+        <ObjectStatus title="Origem" text="SAP" state="Information" class="sapUiTinyMarginTop" />
+        <ObjectStatus title="Integridade" text="{= ${v2>/postingPlanIntegrity} === 'VALID' ? 'Hash conferido após releitura SAP' : 'Não verificada' }" state="{= ${v2>/postingPlanIntegrity} === 'VALID' ? 'Success' : 'Warning' }" />
         <VBox visible="{= !!${v2>/postingPlan} }" class="sapUiSmallMarginTop">
           <HBox wrap="Wrap" class="sapUiTinyMarginBottom">
             <ObjectStatus title="Status" text="{v2>/postingPlan/statusText}" state="{= ${v2>/postingPlan/status} === 'BLOCKED' ? 'Error' : 'Success' }" class="sapUiSmallMarginEnd" />
@@ -144,7 +146,7 @@
             <ObjectStatus title="Versão" text="{v2>/postingPlan/version}" class="sapUiSmallMarginEnd" />
             <ObjectStatus title="Moeda local SAP" text="{v2>/postingPlan/currency}" class="sapUiSmallMarginEnd" />
           </HBox>
-          <Text text="PostingHash: {v2>/postingPlan/postingHash}" wrapping="true" class="sapUiTinyMarginBottom" />
+          <Text text="Hash funcional conferido na releitura; disponível na auditoria técnica." wrapping="true" class="sapUiTinyMarginBottom" />
           <HBox wrap="Wrap" class="sapUiTinyMarginBottom">
             <ObjectStatus title="MOD" text="{v2>/postingPlan/totalModText}" class="sapUiSmallMarginEnd" />
             <ObjectStatus title="GGF" text="{v2>/postingPlan/totalGgfText}" class="sapUiSmallMarginEnd" />
@@ -165,9 +167,9 @@
             <columns><Column><Text text="OP / item / categoria" /></Column><Column><Text text="Conta origem / critério" /></Column><Column hAlign="End"><Text text="Valor · estoque · consumido" /></Column><Column><Text text="Método / dimensões" /></Column><Column><Text text="Documento futuro / status" /></Column><Column><Text text="Bloqueios" /></Column></columns>
             <items><ColumnListItem><cells><ObjectIdentifier title="OP {v2>orderNumber} · {v2>item} · {v2>category}" text="{v2>quantity} {v2>unit}"/><Text text="{v2>accountOriginal} · {v2>criterion}"/><Text text="{v2>amountText} · {v2>stockText} · {v2>consumedText}"/><Text text="{v2>valuationMethod} · {v2>dimensions}" wrapping="true"/><Text text="{v2>futureDocumentTypesText} · {v2>status}" wrapping="true"/><Text text="{v2>blockersText}" wrapping="true"/></cells></ColumnListItem></items>
           </Table>
-          <Title text="Versões locais preservadas" level="H3" titleStyle="H5" class="sapUiSmallMarginTop" />
+          <Title text="Versões persistidas no SAP" level="H3" titleStyle="H5" class="sapUiSmallMarginTop" />
           <List items="{v2>/postingPlanHistory}" showSeparators="Inner">
-            <StandardListItem title="Versão {v2>version} · {v2>status}" description="{v2>createdAt} · SHA-256 {v2>hashPrefix}…" />
+            <StandardListItem title="Versão {v2>version} · {v2>status}" description="{v2>createdAt}" />
           </List>
         </VBox>
       </VBox>

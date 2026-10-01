@@ -1,16 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { parseEnv } from "node:util";
+import { createLocalTestHttpsTransport } from "./ggf-local-test-https-transport.mjs";
 
 export const AUTHORIZED_COMPANY = "SBODEMOBR2";
 
 /** Local test tooling only. No credentials/cookies are returned to callers or logged. */
 export async function openReadSession() {
   const env = parseEnv(await readFile(".env", "utf8"));
-  return createReadSession(env);
+  const localCertificateException = process.env.FBO_SL_ALLOW_INVALID_CERTIFICATE === "1";
+  const transport = localCertificateException
+    ? createLocalTestHttpsTransport(new URL(env.FBO_SL_URL).origin) : fetch;
+  return createReadSession(env, transport, { allowInvalidCertificate: localCertificateException });
 }
 
 /** Injectable transport for offline boundary tests; production calls use native verified fetch. */
-export async function createReadSession(env, transport = fetch) {
+export async function createReadSession(env, transport = fetch, options = {}) {
   let origin;
   try {
     origin = new URL(env.FBO_SL_URL);
@@ -29,9 +33,11 @@ export async function createReadSession(env, transport = fetch) {
   )
     throw new Error("This read-only tool requires a clean HTTPS origin");
   if (!env.FBO_SL_USER || !env.FBO_SL_PASSWORD) throw new Error("Local credentials are missing");
-  // Always verify certificates. Never fall back to cleartext or NODE_TLS_REJECT_UNAUTHORIZED=0.
+  // Never use a process-wide TLS override; the local exception uses a scoped HTTPS Agent only.
   if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0")
     throw new Error("Unsafe global TLS override rejected");
+  if (env.FBO_SL_VERIFY_TLS?.toLowerCase() === "false" && !options.allowInvalidCertificate)
+    throw new Error("Unverified TLS requires an explicit local test-certificate exception");
   const root = `${origin.origin}/b1s/v2/`;
   const login = await transport(root + "Login", {
     method: "POST",
@@ -62,7 +68,7 @@ export async function createReadSession(env, transport = fetch) {
     version: /^\d+$/.test(String(body.Version)) ? String(body.Version) : "unknown",
     sessionTimeoutMinutes: Number.isFinite(body.SessionTimeout) ? body.SessionTimeout : undefined,
     basePath: "/b1s/v2",
-    tlsVerified: true
+    tlsVerified: !options.allowInvalidCertificate
   };
   return {
     info: safeInfo,

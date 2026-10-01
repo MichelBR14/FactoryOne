@@ -3,6 +3,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { openReadSession } from "./ggf-sap-session.mjs";
+import { openHomologationSession } from "./ggf-homologation-session.mjs";
 
 await mkdir(".local/ggf", { recursive: true, mode: 0o700 });
 const output = ".local/ggf/read-runtime.mjs";
@@ -34,6 +35,63 @@ export { ServiceLayerError } from "./webapp/core/service/errors.ts";
 const { SapGgfClosingRepository, SapGgfClosingVersionRepository, SapMetadataUnavailableError,
   ServiceLayerError } = await import(pathToFileURL(resolve(integrityOutput)).href);
 export { SapMetadataUnavailableError };
+
+const postingPlanOutput = ".local/ggf/posting-plan-runtime.mjs";
+await build({ stdin: { contents: `
+export { SapGgfPostingPlanRepository, SapPostingPlanMetadataUnavailableError } from "./webapp/modules/ggf/repository/SapGgfPostingPlanRepository.ts";
+export { buildAccountingPreview } from "./webapp/modules/ggf/service/AccountingPreview.ts";
+export { buildGgfPostingPlanDraft, technicalPostingPlanId } from "./webapp/modules/ggf/service/GgfPostingPlan.ts";
+`, resolveDir: process.cwd() }, outfile: postingPlanOutput, platform: "node", format: "esm", bundle: true });
+const { SapGgfPostingPlanRepository, SapPostingPlanMetadataUnavailableError,
+  buildAccountingPreview, buildGgfPostingPlanDraft, technicalPostingPlanId } =
+  await import(pathToFileURL(resolve(postingPlanOutput)).href);
+
+function postingPlanClient(session, write = false) {
+  const unwrap = (response) => {
+    if (!response.ok) throw new ServiceLayerError("SAP posting plan request rejected", response.status,
+      response.errorCode, response.errorMessage);
+    return response.data;
+  };
+  return {
+    async get(path) { return unwrap(await session.get(path, { Prefer: "odata.maxpagesize=100" })); },
+    async post(path, body) {
+      if (!write || path !== "FBO_GGF_PPLAN") throw new Error("SAP posting plan writes are disabled");
+      return unwrap(await session.postPostingPlan(body));
+    },
+    async patch() { throw new Error("SAP posting plan is append-only"); }
+  };
+}
+
+export async function readPersistedPostingPlan(closingId) {
+  if (!/^[A-Za-z0-9_-]{1,30}$/.test(closingId)) throw new Error("Invalid posting plan ClosingId");
+  const session = await openReadSession();
+  try {
+    const repository = new SapGgfPostingPlanRepository(postingPlanClient(session));
+    const versions = await repository.list(closingId);
+    return { company: session.info.company, closingId, versions, latest: versions.at(-1) ?? null,
+      integrityVerified: true, source: "SAP" };
+  } finally { await session.close(); }
+}
+
+export async function persistBlockedPostingPlan(draft) {
+  if (!draft || draft.status !== "BLOCKED" || draft.postingBlocked !== true ||
+      draft.closingId !== "TECH-SBODEMOBR2-202609" || draft.companyDB !== "SBODEMOBR2" ||
+      draft.totalMod !== "-300000" || draft.totalGgf !== "-616600" ||
+      draft.totalStock !== "0" || draft.totalCpv !== "0" || draft.totalBlocked !== "-916600" ||
+      draft.totalDifference !== "0" || draft.documents?.some(document => document.payload !== null))
+    throw new Error("Posting plan is outside the authorized blocked technical snapshot");
+  const session = await openHomologationSession();
+  let saved;
+  try {
+    const repository = new SapGgfPostingPlanRepository(postingPlanClient(session, true));
+    saved = await repository.append(draft);
+  } finally { await session.close(); }
+  const reread = await readPersistedPostingPlan(saved.closingId);
+  const verified = reread.versions.find(plan => plan.version === saved.version);
+  if (!verified || verified.postingHash !== saved.postingHash)
+    throw new Error("Posting plan was not verified from a new SAP session");
+  return reread;
+}
 
 export async function readSap(filter) {
   const session = await openReadSession();
@@ -82,6 +140,44 @@ export async function readV2AbsorptionDistribution({ filter, mapping }) {
     const stockConsumption = await readStockConsumptionReview(session, distribution);
     return { source, report, distribution, stockConsumption, connection: session.info };
   } finally { await session.close(); }
+}
+
+export function buildTechnicalPostingPlan({ source, report, distribution, stockConsumption }, mapping, accountingConfig) {
+  const categoryTotals = Object.fromEntries(report.reconciliation.map(row =>
+    [String(row.category), String(row.differenceCents)]));
+  const reviewByOrder = new Map((stockConsumption?.orders ?? []).map(row => [String(row.orderNumber), row]));
+  const accountingLines = [];
+  for (const order of distribution.orders) for (const category of ["MOD", "GGF"]) {
+    const amount = String(category === "MOD" ? order.modAdjustmentCents : order.ggfAdjustmentCents);
+    if (amount === "0") continue;
+    const review = reviewByOrder.get(String(order.orderNumber));
+    const basis = order.bases.find(row => row.category === category);
+    accountingLines.push({
+      closingId: null, version: null, orderNumber: String(order.orderNumber), item: String(order.item), warehouse: null,
+      category, accountOriginal: mapping.accounts?.find(row => row.category === category)?.account ?? null,
+      criterion: basis ? String(basis.criterion) : null,
+      quantity: review?.producedQuantity == null ? null : String(review.producedQuantity),
+      unit: review?.unit == null ? null : String(review.unit), amountCents: amount,
+      stockCents: review?.[category === "MOD" ? "modStockCents" : "ggfStockCents"] == null
+        ? null : String(review[category === "MOD" ? "modStockCents" : "ggfStockCents"]),
+      consumedCents: review?.[category === "MOD" ? "modConsumedCents" : "ggfConsumedCents"] == null
+        ? null : String(review[category === "MOD" ? "modConsumedCents" : "ggfConsumedCents"]),
+      stockTraceStatus: String(review?.status ?? "BLOCKED_AMBIGUOUS_TRACE"),
+      valuationMethod: review?.valuationMethod == null ? null : String(review.valuationMethod),
+      inventoryAccountFromSap: review?.accountingDetermination,
+      consumedOperationKey: null,
+      sourceRefs: order.bases.filter(row => row.category === category).flatMap(row => row.sourceRefs ?? [])
+    });
+  }
+  const accounting = buildAccountingPreview({ MOD: categoryTotals.MOD ?? "0", GGF: categoryTotals.GGF ?? "0" },
+    accountingLines, accountingConfig);
+  const draft = buildGgfPostingPlanDraft(accounting, {
+    closingId: technicalPostingPlanId(source.company, source.filter.start), companyDB: source.company,
+    periodStart: source.filter.start, periodEnd: source.filter.end, branch: source.filter.branch,
+    dimensions: source.filter.dimensions, currency: stockConsumption?.currency ?? null,
+    currencySource: stockConsumption?.currencySource ?? null, sourceCapturedAt: source.capturedAt
+  });
+  return { accounting, draft };
 }
 
 async function readStockConsumptionReview(session, distribution) {

@@ -6,7 +6,7 @@ import ResourceModel from "sap/ui/model/resource/ResourceModel";
 import TextArea from "sap/m/TextArea";
 import { isSapReadMode } from "../../../core/config/runtime";
 import { buildAccountingPreview, type AccountingPreviewConfig, type AccountingPreviewLineInput } from "../service/AccountingPreview";
-import { buildGgfPostingPlanDraft, LocalGgfPostingPlanRepository, technicalPostingPlanId } from "../service/GgfPostingPlan";
+import { buildGgfPostingPlanDraft, technicalPostingPlanId, type GgfPostingPlan } from "../service/GgfPostingPlan";
 import type Event from "sap/ui/base/Event";
 
 const CONFIG_KEY = "factoryone.ggf.v2.absorption.mapping";
@@ -40,7 +40,7 @@ export default class AbsorptionV2 extends Controller {
       busy: false, hasResult: false, report: null, entries: [], resources: [],
       summary: [], completeness: [], evidence: "", distribution: null, distributionCategories: [],
       distributionOrders: [], distributionBases: [], distributionWarnings: [], postingPlan: null,
-      postingPlanHistory: [], postingPlanError: null,
+      postingPlanHistory: [], postingPlanError: null, postingPlanSource: "SAP", postingPlanIntegrity: "NOT_VERIFIED",
       stockConsumptionOrders: [], fifoScenario: null, accountingPreview: null, technicalAccountingPreview: null
     }), "v2");
     void this.loadPersistedPostingPlan();
@@ -48,17 +48,27 @@ export default class AbsorptionV2 extends Controller {
 
   private async loadPersistedPostingPlan(): Promise<void> {
     const model = this.getView()!.getModel("v2") as JSONModel;
+    const closingId = "TECH-SBODEMOBR2-202609";
     try {
-      const plans = await new LocalGgfPostingPlanRepository(window.localStorage).list();
-      const latest = plans.at(-1);
+      const response = await fetch(`/__ggf/v2/posting-plan?closingId=${encodeURIComponent(closingId)}`, {
+        headers: { "X-FactoryOne-Read": "1" }, credentials: "same-origin", cache: "no-store"
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.code ?? "SAP_POSTING_PLAN_READ_FAILED");
+      const plans = body.versions as GgfPostingPlan[];
+      const latest = body.latest as GgfPostingPlan | null;
+      model.setProperty("/postingPlanIntegrity", body.integrityVerified === true ? "VALID" : "NOT_VERIFIED");
       if (!latest) return;
       const formatMoney = (cents: string) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(cents) / 100);
       model.setProperty("/postingPlan", this.formatPostingPlan(latest, formatMoney));
-      model.setProperty("/postingPlanHistory", plans.filter(plan => plan.closingId === latest.closingId).map(plan => ({
-        version: plan.version, status: plan.status, hashPrefix: plan.postingHash.slice(0, 16), createdAt: plan.createdAt
+      model.setProperty("/postingPlanHistory", plans.map(plan => ({
+        version: plan.version, status: plan.status, createdAt: plan.createdAt
       })));
-    } catch {
-      model.setProperty("/postingPlanError", "O plano local não pôde ser verificado. Nenhuma operação foi enviada ao SAP.");
+    } catch (error) {
+      model.setProperty("/postingPlanIntegrity", "NOT_VERIFIED");
+      model.setProperty("/postingPlanError", error instanceof Error && error.message === "SAP_METADATA_UNAVAILABLE"
+        ? "Metadados do plano indisponíveis no SAP. O estado não foi validado e a persistência permanece bloqueada."
+        : "Não foi possível reler o plano diretamente do SAP. Nenhum dado local foi usado como substituto.");
     }
   }
 
@@ -249,20 +259,33 @@ export default class AbsorptionV2 extends Controller {
       try {
         const source = body.source as { company: string; capturedAt: string; filter: { start: string; end: string; branch: string; dimensions: string[] } };
         const stock = body.stockConsumption as { currency?: string | null; currencySource?: string | null };
-        const plans = new LocalGgfPostingPlanRepository(window.localStorage);
         const draft = buildGgfPostingPlanDraft(accounting, {
           closingId: technicalPostingPlanId(source.company, source.filter.start), companyDB: source.company,
           periodStart: source.filter.start, periodEnd: source.filter.end, branch: source.filter.branch,
           dimensions: source.filter.dimensions, currency: stock.currency ?? null,
           currencySource: stock.currencySource ?? null, sourceCapturedAt: source.capturedAt
         });
-        const savedPlan = await plans.append(draft);
+        if (JSON.stringify(draft).length > 50000) throw new Error("SNAPSHOT_TOO_LARGE");
+        const persisted = await fetch("/__ggf/v2/posting-plan/persist", {
+          method: "POST", headers: { "Content-Type": "application/json", "X-FactoryOne-Plan-Write": "1" },
+          credentials: "same-origin", cache: "no-store", body: JSON.stringify(draft)
+        });
+        const saved = await persisted.json();
+        if (!persisted.ok) throw new Error(saved.code ?? "SAP_POSTING_PLAN_WRITE_FAILED");
+        const savedPlan = saved.latest as GgfPostingPlan;
+        model.setProperty("/postingPlanIntegrity", saved.integrityVerified === true ? "VALID" : "NOT_VERIFIED");
         model.setProperty("/postingPlan", this.formatPostingPlan(savedPlan, formatMoney));
-        model.setProperty("/postingPlanHistory", (await plans.list(savedPlan.closingId)).map(plan => ({
-          version: plan.version, status: plan.status, hashPrefix: plan.postingHash.slice(0, 16), createdAt: plan.createdAt
+        model.setProperty("/postingPlanHistory", (saved.versions as GgfPostingPlan[]).map(plan => ({
+          version: plan.version, status: plan.status, createdAt: plan.createdAt
         })));
-      } catch {
-        model.setProperty("/postingPlanError", "O plano técnico não pôde ser persistido e relido neste navegador. Nenhum documento foi enviado ao SAP.");
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "SAP_POSTING_PLAN_WRITE_FAILED";
+        model.setProperty("/postingPlanIntegrity", "NOT_VERIFIED");
+        model.setProperty("/postingPlanError", reason === "POSTING_PLAN_WRITE_UNCERTAIN"
+          ? "A gravação ficou em estado incerto. O plano precisa ser reconciliado diretamente no SAP; não tente repetir automaticamente."
+          : reason === "SAP_METADATA_UNAVAILABLE"
+            ? "Metadados do plano indisponíveis no SAP. Nenhum snapshot foi confirmado."
+            : "O SAP não confirmou a persistência do plano técnico. Nenhum documento financeiro foi enviado.");
       }
       const fifo = stockConsumption?.fifoScenario;
       if (fifo?.calculation?.totalStockCents != null && fifo?.calculation?.totalConsumedCents != null) {
@@ -330,7 +353,7 @@ export default class AbsorptionV2 extends Controller {
     };
   }
 
-  private formatPostingPlan(plan: Awaited<ReturnType<LocalGgfPostingPlanRepository["append"]>>, formatMoney: (value: string) => string) {
+  private formatPostingPlan(plan: GgfPostingPlan, formatMoney: (value: string) => string) {
     return { ...plan,
       totalModText: formatMoney(plan.totalMod), totalGgfText: formatMoney(plan.totalGgf),
       totalStockText: formatMoney(plan.totalStock), totalCpvText: formatMoney(plan.totalCpv),

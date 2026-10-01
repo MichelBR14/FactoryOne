@@ -92,7 +92,7 @@ describe("SAP native closing repository (offline)",()=>{
   it("plans four nondeletable UDOs and all audit fields",()=>{
     const plan=planMetadata(GGF_CLOSING_METADATA);
     expect(plan.warnings).toEqual([]);
-    expect(plan.actions.filter(a=>a.kind==="createObject")).toHaveLength(4);
+    expect(plan.actions.filter(a=>a.kind==="createObject")).toHaveLength(5);
     expect(plan.actions.filter(a=>a.kind==="createObject").every(a=>a.body.CanDelete==="tNO")).toBe(true);
     expect(plan.actions.filter(a=>a.kind==="createObject")
       .every(a=>a.body.ApplyAuthorization==="tYES")).toBe(true);

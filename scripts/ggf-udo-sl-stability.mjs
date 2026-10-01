@@ -1,23 +1,26 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { parseEnv } from "node:util";
+import { createLocalTestHttpsTransport } from "./ggf-local-test-https-transport.mjs";
 
 const COMPANY = "SBODEMOBR2";
 const UDO = "FBO_GGF_CVERS";
 const KEYS = ["F1HL260929F.00001", "F1HL260929F.00002"];
 const STABLE_KEY = "F1HL260929F";
-const NAMES = ["FBO_GGF_CLOSE", "FBO_GGF_CLINE", "FBO_GGF_CLAIM", UDO];
+const NAMES = ["FBO_GGF_CLOSE", "FBO_GGF_CLINE", "FBO_GGF_CLAIM", UDO, "FBO_GGF_PPLAN"];
 const repeats = Number(process.argv[2] ?? 16);
 if (!Number.isSafeInteger(repeats) || repeats < 2 || repeats > 50)
   throw new Error("Choose 2 to 50 independent sessions");
 
 const env = parseEnv(await readFile(".env", "utf8"));
 const origin = new URL(env.FBO_SL_URL);
+const localCertificateException = process.env.FBO_SL_ALLOW_INVALID_CERTIFICATE === "1";
 if (env.FBO_SL_COMPANY_DB !== COMPANY || !["dev", "test"].includes(env.FBO_ENV) ||
     origin.protocol !== "https:" || origin.pathname !== "/" || origin.search || origin.hash ||
-    origin.username || origin.password || env.FBO_SL_VERIFY_TLS?.toLowerCase() === "false" ||
+    origin.username || origin.password || (env.FBO_SL_VERIFY_TLS?.toLowerCase() === "false" && !localCertificateException) ||
     process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0")
-  throw new Error("Verified TLS and authorized test company required");
+  throw new Error("HTTPS and authorized test company required; TLS bypass must be scoped locally");
+const transport = localCertificateException ? createLocalTestHttpsTransport(origin.origin) : fetch;
 const base = `${origin.origin}/b1s/v2/`;
 const evidenceDir = ".local/ggf";
 await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
@@ -39,7 +42,7 @@ for (let index = 0; index < repeats; index++) {
   const sample = { at: new Date().toISOString(), session: `s${String(index + 1).padStart(2, "0")}` };
   let cookie, metadataBody;
   try {
-    const login = await fetch(base + "Login", { method: "POST", redirect: "error",
+    const login = await transport(base + "Login", { method: "POST", redirect: "error",
       signal: AbortSignal.timeout(20000), headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ CompanyDB: COMPANY, UserName: env.FBO_SL_USER,
         Password: env.FBO_SL_PASSWORD }) });
@@ -52,7 +55,7 @@ for (let index = 0; index < repeats; index++) {
     sample.routeFingerprint = fingerprint(route);
     sample.routeNode = /ROUTEID=\.node(\d+)$/.exec(route)?.[1] ?? null;
     cookie = `${session}; ${route}`;
-    const get = async (path, accept = "application/json") => detail(await fetch(base + path,
+    const get = async (path, accept = "application/json") => detail(await transport(base + path,
       { redirect: "error", signal: AbortSignal.timeout(30000), headers: { Cookie: cookie, Accept: accept } }));
     const metadata = await get("$metadata", "application/xml");
     metadataBody = metadata.body;
@@ -97,7 +100,7 @@ for (let index = 0; index < repeats; index++) {
   } finally {
     if (cookie) {
       try {
-        const logout = await fetch(base + "Logout", { method: "POST", redirect: "error",
+        const logout = await transport(base + "Logout", { method: "POST", redirect: "error",
           signal: AbortSignal.timeout(10000), headers: { Cookie: cookie } });
         sample.logoutHttp = logout.status;
       } catch (error) { sample.logoutError = error?.cause?.code ?? error?.name ?? "LOGOUT_FAILED"; }
@@ -116,7 +119,7 @@ for (let index = 0; index < repeats; index++) {
       sample.nodeHealth = [];
       for (const node of [1, 2, 3, 4]) {
         try {
-          const response = await fetch(`${origin.origin}/ping/node/${node}`,
+          const response = await transport(`${origin.origin}/ping/node/${node}`,
             { signal: AbortSignal.timeout(5000) });
           sample.nodeHealth.push({ node, http: response.status });
         } catch (error) {
@@ -135,7 +138,8 @@ for (let index = 0; index < repeats; index++) {
 }
 const file = `.local/ggf/udo-sl-stability-${new Date().toISOString().replaceAll(":", "-")}.json`;
 await writeFile(file, JSON.stringify({ company: COMPANY, testedAt: new Date().toISOString(),
-  method: "independent login, sticky ROUTEID, GET only", sessions }, null, 2) + "\n", { mode: 0o600 });
+  method: "independent login, sticky ROUTEID, GET only", tlsVerified: !localCertificateException,
+  localCertificateException, sessions }, null, 2) + "\n", { mode: 0o600 });
 console.log(JSON.stringify({ evidence: file, sessions: sessions.length,
   ok: sessions.filter(row => row.ok).length,
   serviceNotFound: sessions.filter(row => KEYS.some(key =>

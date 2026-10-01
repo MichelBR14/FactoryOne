@@ -86,7 +86,7 @@ describe("GGF closing lifecycle (offline; no SAP POST)", () => {
   });
   it("declares a valid native UDT/UDO schema", () => {
     expect(validateMetadataSet(GGF_CLOSING_METADATA)).toEqual([]);
-    expect(GGF_CLOSING_METADATA.objects.map(o=>o.table)).toEqual(["CLOSE","CLINE","CLAIM","CVERS"]);
+    expect(GGF_CLOSING_METADATA.objects.map(o=>o.table)).toEqual(["CLOSE","CLINE","CLAIM","CVERS","PPLAN"]);
   });
   it("first valid POST claims once, persists POSTING, and links the verified SAP document", async () => {
     const f=fixture(), b=basis(); await f.service.prepareReady("TEST_1",b);

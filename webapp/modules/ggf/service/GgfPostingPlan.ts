@@ -60,8 +60,10 @@ export interface GgfPostingPlanDocument {
 export interface GgfPostingPlan {
   closingId: string;
   version: number;
+  closingVersion: number | null;
   postingHash: string;
   createdAt: string;
+  createdBy: string | null;
   status: GgfPostingPlanStatus;
   companyDB: string;
   periodStart: string;
@@ -76,6 +78,7 @@ export interface GgfPostingPlan {
   totalCpv: string;
   totalBlocked: string;
   totalDifference: string;
+  accountingDifference: string;
   lines: GgfPostingPlanLine[];
   documents: GgfPostingPlanDocument[];
   blockers: string[];
@@ -101,7 +104,7 @@ function stable(value: unknown): unknown {
 }
 
 function functionalContent(plan: GgfPostingPlan) {
-  const { postingHash: _hash, createdAt: _created, sourceCapturedAt: _captured, ...functional } = plan;
+  const { postingHash: _hash, createdAt: _created, createdBy: _creator, sourceCapturedAt: _captured, ...functional } = plan;
   return stable(functional);
 }
 
@@ -130,6 +133,8 @@ export function buildGgfPostingPlanDraft(
     currency: string | null;
     currencySource: string | null;
     sourceCapturedAt: string;
+    closingVersion?: number | null;
+    createdBy?: string | null;
   }
 ): GgfPostingPlanDraft {
   const blockers = new Set<string>();
@@ -222,8 +227,11 @@ export function buildGgfPostingPlanDraft(
   if (lines.some(line => line.status !== "READY")) blockers.add("ACCOUNTING_LINE_BLOCKED");
   return { ...context,
     status: blockers.size ? "BLOCKED" as const : "VALIDATED" as const,
+    closingVersion: context.closingVersion ?? null,
+    createdBy: context.createdBy ?? null,
     totalMod, totalGgf, totalStock: preview.totals.stockCents, totalCpv: preview.totals.cpvCents,
     totalBlocked: preview.totals.blockedCents, totalDifference: preview.totals.differenceCents,
+    accountingDifference: preview.totals.accountingDifferenceCents,
     lines, documents, blockers: [...blockers].sort(), sourceMode: "SAP_READ_ONLY" as const,
     postingBlocked: true as const };
 }

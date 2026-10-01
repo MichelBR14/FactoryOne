@@ -27,10 +27,12 @@ async function run(operation) {
     throw new Error("Choose plan, install, smoke or verify-exposure");
   const env=parseEnv(await readFile(".env","utf8"));
   const url=new URL(env.FBO_SL_URL);
+  const localCertificateException=process.env.FBO_SL_ALLOW_INVALID_CERTIFICATE==="1";
   if (env.FBO_SL_COMPANY_DB!==TEST_COMPANY || !["dev","test"].includes(env.FBO_ENV) ||
       url.protocol!=="https:" || url.pathname!=="/" || url.search || url.hash || url.username || url.password ||
-      env.FBO_SL_VERIFY_TLS?.toLowerCase()==="false" || process.env.NODE_TLS_REJECT_UNAUTHORIZED==="0")
-    throw new Error("Controlled test company and verified TLS required");
+      (env.FBO_SL_VERIFY_TLS?.toLowerCase()==="false" && !localCertificateException) ||
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED==="0")
+    throw new Error("Controlled HTTPS test company required; TLS bypass must be scoped locally");
   const {CORE_METADATA,MetadataInstaller,GGF_CLOSING_METADATA,fullTableName,SapGgfClosingRepository,
     ServiceLayerError}=await bundle();
   const sap=await openHomologationSession();
@@ -51,6 +53,10 @@ async function run(operation) {
       const fresh=await openHomologationSession();
       try {
         if(fresh.routeNode)nodes.add(fresh.routeNode);
+        const schema=await fresh.get("$metadata","application/xml");
+        if(!schema.ok || typeof schema.data!=="string" || set.objects.some(object=>
+            !schema.data.includes(`<EntityType Name="${fullTableName(set,object.table)}"`)))
+          throw new Error("SAP_METADATA_UNAVAILABLE: UDO entity missing from fresh-session metadata");
         for(const object of set.objects) {
           const code=fullTableName(set,object.table);
           const metadata=await fresh.get(`UserObjectsMD('${code}')`);

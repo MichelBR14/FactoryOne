@@ -1,5 +1,17 @@
 # Exposicao do UDO FBO_GGF_CVERS na Service Layer
 
+## Validacao pos-reinicio e PPLAN - 01/10/2026
+
+O usuario confirmou o restart da Service Layer. A bateria inicial de 100 sessoes para os quatro UDOs existentes passou (evidencias de 30/09 descritas abaixo). Na primeira tentativa apos criar PPLAN, o certificado TLS estava expirado e a SL inacessivel. Com autorizacao expressa do usuario, as rotinas locais de homologacao passaram a aceitar o certificado expirado usando um `https.Agent` dedicado, mantendo criptografia HTTPS, sem `NODE_TLS_REJECT_UNAUTHORIZED=0`, sem HTTP e sem mudar a confianca TLS global. O modo exige `FBO_SL_ALLOW_INVALID_CERTIFICATE=1` na invocacao, empresa `SBODEMOBR2`, ambiente dev/test e endpoint HTTPS; nas sessoes de escrita so permite metadata PPLAN, versao do schema GGF e snapshot PPLAN bloqueado. Escritas de financeiro, OP, estoque e outros UDOs falham fechadas. Evidencia registra `tlsVerified=false` para nao confundir a excecao com validacao de identidade do servidor.
+
+Exemplo de invocacao local: `FBO_SL_ALLOW_INVALID_CERTIFICATE=1 node scripts/ggf-closing-metadata.mjs verify-exposure`. Nao grave essa excecao em `.env`, nao a use em producao e nao a combine com `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+
+Com a excecao local, `$metadata` mostrou `FBO_GGF_PPLAN`; `FBO_GGF_PPLAN/$count` HTTP 200 (0 antes do snapshot) e `UserObjectsMD` confirmou `ApplyAuthorization=tYES`, `CanDelete=tNO`. `verify-exposure` passou em 16 sessoes GGF nos quatro nos e 8 sessoes core nos nos 2, 3 e 4. Duas baterias PPLAN de 50 sessoes independentes, separadas por cerca de seis minutos, passaram 50/50 cada; nos 1-4 observados; metadata/endpoints/versionamento legados consistentes; zero `Service Not Found`. Evidencias sanitizadas: `.local/ggf/udo-sl-stability-2026-10-01T11-59-32.786Z.json` e `.local/ggf/udo-sl-stability-2026-10-01T12-06-10.680Z.json`.
+
+Nova execucao idempotente do instalador reportou `created=0`, sem divergencias; releu exposicao nos cinco UDOs e registrou GGF schema v3 em `FBO_SETUP`. O PostingPlan tecnico foi persistido e lido de volta numa sessao independente, depois relido em mais tres logins sequenciais com hash/totais/linhas identicos. Tres leituras simultaneas tiveram um erro HTTP 500 no login; isso nao produziu divergencia, mas concorrencia deve ser homologada separadamente. O unico POST de dados foi o UDO PPLAN; nenhum documento financeiro, claim, OP ou estoque foi alterado.
+
+**Conclusao:** a estabilidade multi-node do PPLAN esta homologada para as amostras pos-instalacao sob a excecao local TLS acima. A autenticidade do certificado nao foi validada; antes de retirar essa excecao, renovar o certificado e repetir ao menos o smoke read normal. Nao remover a protecao `SAP_METADATA_UNAVAILABLE` do produto.
+
 ## Resultado em 29/09/2026
 
 **Causa imediata comprovada:** a Service Layer entregou `$metadata` sem `FBO_GGF_CVERS` em uma sessao na qual `UserObjectsMD('FBO_GGF_CVERS')` retornou HTTP 200 e `FBO_GGF_CLOSE` continuou legivel. Logo, o UDO existe no SAP; o problema e a exposicao/metadados da Service Layer, nao ausencia do registro. Em tentativas anteriores, o GET do UDO retornou HTTP 400, codigo `-1002`, `Service Not Found`. **O processo/no responsavel pelo cache desatualizado ainda nao foi identificado**; a evidencia disponivel nao permite declarar a causa operacional final nem afirmar que o ambiente foi reparado.

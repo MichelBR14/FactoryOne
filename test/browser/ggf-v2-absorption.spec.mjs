@@ -47,12 +47,29 @@ const response = {
 
 for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${width}px`, async ({ page }) => {
   const errors = [];
+  let savedPlan = null;
   page.on("pageerror", (error) => errors.push(error.message));
   await page.setViewportSize({ width, height: 900 });
   await page.route("**/__ggf/v2/distribution?*", (route) => {
     expect(route.request().method()).toBe("GET");
     expect(route.request().headers()["x-factoryone-read"]).toBe("1");
     return route.fulfill({ json: response });
+  });
+  await page.route("**/__ggf/v2/posting-plan**", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      expect(request.headers()["x-factoryone-read"]).toBe("1");
+      return route.fulfill({ json: { source: "SAP", integrityVerified: true, versions: savedPlan ? [savedPlan] : [], latest: savedPlan } });
+    }
+    expect(request.url()).toMatch(/\/__ggf\/v2\/posting-plan\/persist$/);
+    expect(request.method()).toBe("POST");
+    expect(request.headers()["x-factoryone-plan-write"]).toBe("1");
+    const draft = request.postDataJSON();
+    expect(draft.status).toBe("BLOCKED");
+    expect(draft.postingBlocked).toBe(true);
+    expect(draft.documents.every((document) => document.payload === null)).toBe(true);
+    savedPlan = { ...draft, version: 1, createdAt: "2026-09-30T20:00:00.000Z", postingHash: "a".repeat(64) };
+    return route.fulfill({ json: { source: "SAP", integrityVerified: true, versions: [savedPlan], latest: savedPlan } });
   });
   await page.goto("/index.html?mode=development&source=sap-read#/ggf/fechamento");
   await page.getByRole("button", { name: "GGF V2 / Apuração" }).click();
@@ -77,7 +94,7 @@ for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${widt
   await expect(page.getByText("7. Plano de Contabilização")).toBeVisible();
   await expect(page.getByText("Bloqueado", { exact: true }).last()).toBeVisible();
   await expect(page.getByText("Ordem 2 · JournalEntry.CPV", { exact: true })).toBeVisible();
-  await expect(page.getByText("Nenhum claim ou documento financeiro é criado.")).toBeVisible();
+  await expect(page.getByText(/não cria claim nem documento financeiro/)).toBeVisible();
   await expect(page.getByText("Prévia técnica somente leitura. Não cria MaterialRevaluation nem Journal Entry.")).toBeVisible();
   await page.getByText("A. Estoque · MaterialRevaluation").click();
   await expect(page.getByText("Payload", { exact: true }).first()).toBeVisible();
@@ -89,7 +106,8 @@ for (const width of [1440, 390]) test(`GGF V2 reconciliation read-only at ${widt
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.reload();
   await expect(page.getByText("7. Plano de Contabilização")).toBeVisible();
-  await expect(page.getByText(/PostingHash: [a-f0-9]{64}/)).toBeVisible();
+  await expect(page.getByText("Hash funcional conferido na releitura; disponível na auditoria técnica.")).toBeVisible();
+  await expect(page.getByText(/Hash conferido após releitura SAP/)).toBeVisible();
   await expect(page.getByText("Bloqueado", { exact: true }).last()).toBeVisible();
   await page.getByRole("button", { name: "Voltar ao menu GGF" }).last().click();
   await expect(page).toHaveURL(/#\/ggf$/);
