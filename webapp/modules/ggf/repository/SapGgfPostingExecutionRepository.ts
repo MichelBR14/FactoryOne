@@ -3,7 +3,7 @@ import { tableName } from "../../../core/config/product";
 import { ServiceLayerError } from "../../../core/service/errors";
 import { assertExecutionIdentity, calculateGgfExecutionId, calculateGgfRequestHash, executionTotals,
   type GgfDocumentAttempt, type GgfPostingDocumentLedger, type GgfPostingExecutionIdentity,
-  type GgfPostingExecutionRecord } from "../service/GgfPostingExecution";
+  type GgfPostingExecutionRecord, type GgfPrePostRecoveryAudit } from "../service/GgfPostingExecution";
 
 const EXEC = tableName("ggf", "PEXEC");
 const DOC = tableName("ggf", "PDOC");
@@ -307,6 +307,65 @@ export class SapGgfPostingExecutionRepository {
     if (!saved) throw new Error("Posting execution update/readback failed");
     return saved;
   }
+
+  async recordPrePostRecoveryAudit(executionId: string, originalError: string, audit: GgfPrePostRecoveryAudit): Promise<string> {
+    const current = await this.get(executionId);
+    if (!current || !["FAILED", "READY"].includes(current.status) || current.documents.length !== 3 ||
+        current.documents.some(document => document.status !== "PENDING" || document.attemptCount !== 0 ||
+          document.attemptStartedAt !== null || document.responseReceivedAt !== null || document.requestHash !== null ||
+          document.request !== null || document.response !== null || document.sapDocEntry !== null ||
+          document.sapDocNum !== null || document.sapTransId !== null || document.attempts.length !== 0))
+      throw new Error("Execution no longer satisfies the zero-attempt FAILED recovery gate");
+    const event = JSON.stringify({ failureCategory: audit.failureCategory, failureDetail: audit.failureDetail,
+      originalError, failedAt: current.finishedAt, RecoveryAuthorizedAt: audit.authorizedAt,
+      RecoveryReason: audit.reason, RecoveryFromStatus: audit.recoveryFromStatus,
+      RecoveryCount: audit.recoveryCount });
+    if (current.lastError === event) return event;
+    if (current.lastError === originalError && originalError !== "PRE_POST_CHECK_FAILED") {
+      let previous: Record<string, unknown> | null = null;
+      try { previous = JSON.parse(originalError) as Record<string, unknown>; } catch { /* invalid audit */ }
+      if (["FAILED", "READY"].includes(current.status) && previous?.failureCategory === audit.failureCategory &&
+          previous.failureDetail === audit.failureDetail && previous.originalError === "PRE_POST_CHECK_FAILED" &&
+          previous.RecoveryAuthorizedAt === audit.authorizedAt && previous.RecoveryReason === audit.reason &&
+          previous.RecoveryFromStatus === audit.recoveryFromStatus && previous.RecoveryCount === audit.recoveryCount)
+        return originalError;
+      throw new Error("Original pre-POST failure differs from the authorized recovery event");
+    }
+    if (current.lastError !== originalError) {
+      let previous: Record<string, unknown> | null = null;
+      try { previous = JSON.parse(current.lastError ?? "null") as Record<string, unknown> | null; } catch { /* invalid audit */ }
+      if (current.status === "FAILED" && previous?.failureCategory === audit.failureCategory &&
+          previous.failureDetail === audit.failureDetail && previous.originalError === "PRE_POST_CHECK_FAILED" &&
+          previous.RecoveryAuthorizedAt === audit.authorizedAt && previous.RecoveryReason === audit.reason &&
+          previous.RecoveryFromStatus === audit.recoveryFromStatus && previous.RecoveryCount === audit.recoveryCount)
+        return current.lastError!;
+      throw new Error("Original pre-POST failure differs from the authorized recovery event");
+    }
+    if (originalError !== "PRE_POST_CHECK_FAILED" || current.status !== "FAILED")
+      throw new Error("Original pre-POST failure differs from the authorized recovery event");
+    await this.client.patch(`${EXEC}(${quote(executionId)})`, { U_LastError: event });
+    const saved = await this.get(executionId);
+    if (!saved || saved.status !== "FAILED" || saved.lastError !== event || saved.finishedAt !== current.finishedAt)
+      throw new Error("Recovery audit event readback differs");
+    return event;
+  }
+
+  async finishPrePostRecovery(executionId: string, event: string): Promise<GgfPostingExecutionRecord> {
+    const current = await this.get(executionId);
+    if (!current || !["FAILED", "READY"].includes(current.status) || current.lastError !== event || current.documents.length !== 3 ||
+        current.documents.some(document => document.status !== "PENDING" || document.attemptCount !== 0 ||
+          document.attemptStartedAt !== null || document.responseReceivedAt !== null || document.requestHash !== null ||
+          document.request !== null || document.response !== null || document.sapDocEntry !== null ||
+          document.sapDocNum !== null || document.sapTransId !== null || document.attempts.length !== 0))
+      throw new Error("Execution changed before the explicit pre-POST recovery could finish");
+    if (current.status === "READY") return current;
+    await this.client.patch(`${EXEC}(${quote(executionId)})`, { U_Status: "READY", U_FinishedAt: "" });
+    const saved = await this.get(executionId);
+    if (!saved || saved.status !== "READY" || saved.lastError !== event || saved.finishedAt !== null ||
+        saved.documents.some(document => document.status !== "PENDING" || document.attemptCount !== 0))
+      throw new Error("Recovered execution readback differs");
+    return saved;
+  }
 }
 
 export interface SapGgfFinancialClaim extends GgfPostingExecutionIdentity {
@@ -391,5 +450,20 @@ export class SapGgfPostingClaimRepository {
     const saved = await this.get(executionId);
     if (!saved || saved.status !== status || saved.updatedAt !== at)
       throw new Error("SAP financial claim status readback differs");
+  }
+
+  async recoverFailed(executionId: string, at: string): Promise<void> {
+    const current = await this.get(executionId);
+    if (!current || !["FAILED", "CLAIMED"].includes(current.status)) throw new Error("Only the same FAILED claim can be recovered");
+    if (current.status === "CLAIMED") {
+      if (current.updatedAt !== at) throw new Error("Existing recovered claim audit timestamp differs");
+      return;
+    }
+    await this.client.patch(`${this.entity}(${quote(executionId)})`, { U_Status: "CLAIMED", U_UpdatedAt: at });
+    const saved = await this.get(executionId);
+    if (!saved || saved.status !== "CLAIMED" || saved.updatedAt !== at ||
+        saved.closingId !== current.closingId || saved.closingVersion !== current.closingVersion ||
+        saved.postingPlanVersion !== current.postingPlanVersion || saved.postingHash !== current.postingHash)
+      throw new Error("Recovered claim readback differs");
   }
 }

@@ -300,6 +300,37 @@ export class SapGgfClosingRepository implements GgfClosingStore {
     await this.client.patch(`${CLOSE}(${quote(next.closingId)})`, headerBody(next));
   }
 
+  async recoverPrePostFailed(expected: GgfClosing): Promise<GgfClosing> {
+    if (!(["FAILED", "READY_TO_POST"] as string[]).includes(expected.status) || !expected.postingHash || !expected.postingBasis ||
+        !expected.proposedPayload || expected.sapMaterialRevaluationDocEntry !== null ||
+        expected.sapMaterialRevaluationDocNum !== null || expected.sapJournalEntryDocEntry !== null ||
+        expected.sapJournalEntryDocNum !== null || expected.sapJournalTransId !== null)
+      throw new Error("Only an unlinked FAILED pre-POST closing can be recovered");
+    const current = await this.get(expected.closingId);
+    if (!current || current.status !== expected.status || current.version !== expected.version ||
+        current.postingHash !== expected.postingHash || JSON.stringify(current.lines) !== JSON.stringify(expected.lines) ||
+        current.sapMaterialRevaluationDocEntry !== null || current.sapMaterialRevaluationDocNum !== null ||
+        current.sapJournalEntryDocEntry !== null || current.sapJournalEntryDocNum !== null || current.sapJournalTransId !== null)
+      throw new Error("Closing changed or has a financial SAP link; recovery is blocked");
+    if (current.status === "READY_TO_POST") {
+      if (current.version !== 7) throw new Error("Recovered Closing has an unexpected lifecycle version");
+      return current;
+    }
+    if (current.version !== 6) throw new Error("Failed Closing version differs from the approved recovery checkpoint");
+    const next = { ...current, status: "READY_TO_POST" as const, version: current.version + 1 };
+    await assertClosingConsistency(next);
+    await this.client.patch(`${CLOSE}(${quote(next.closingId)})`, {
+      U_Status: next.status, U_Version: String(next.version)
+    });
+    const saved = await this.get(next.closingId);
+    if (!saved || saved.status !== "READY_TO_POST" || saved.version !== next.version ||
+        saved.postingHash !== expected.postingHash || JSON.stringify(saved.lines) !== JSON.stringify(expected.lines) ||
+        saved.sapMaterialRevaluationDocEntry !== null || saved.sapMaterialRevaluationDocNum !== null ||
+        saved.sapJournalEntryDocEntry !== null || saved.sapJournalEntryDocNum !== null || saved.sapJournalTransId !== null)
+      throw new Error("Recovered closing readback differs");
+    return saved;
+  }
+
   async claim(closingId: string, hash: string, version: number): Promise<void> {
     if (!/^[A-Za-z0-9_-]{1,30}$/.test(closingId) || !/^[a-f0-9]{64}$/.test(hash) ||
         !Number.isSafeInteger(version) || version < 1) throw new Error("Invalid posting claim");

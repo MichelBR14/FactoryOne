@@ -32,6 +32,9 @@ async function planFixture(): Promise<GgfPostingPlan> {
     periodStart: "2026-09-01", periodEnd: "2026-09-30", branch: "", dimensions: [], currency: "BRL",
     currencySource: "test fixture", sourceCapturedAt: time, closingVersion: 7, createdBy: actor });
   const result = { ...draft, version: 1, createdAt: time, postingHash: "" } as GgfPostingPlan;
+  result.technicalRequestHashes = Object.fromEntries(await Promise.all(result.documents.map(async document => [document.type,
+    await calculateGgfRequestHash({ Comments: `FactoryOne GGF ${closingId}`, type: document.type,
+      total: document.totalCents })] as const)));
   result.postingHash = await calculateGgfPostingPlanHash(result);
   return result;
 }
@@ -72,6 +75,25 @@ class MemoryOrchestrationStore implements GgfPostingOrchestrationStore {
     this.closingStatus = input.status;
     return this.lifecycleVersion;
   }
+  async recoverPrePostFailedExecution(executionId: string, audit: { authorizedAt: string; reason: string;
+    failureCategory: "PRE_POST_CHECKPOINT_SERIALIZATION_ERROR"; failureDetail: "NULL_VS_EMPTY_REQUEST_NORMALIZATION";
+    recoveryFromStatus: "FAILED"; recoveryCount: number }) {
+    const current = await this.findExecution(executionId);
+    if (!current || current.status !== "FAILED" || current.error !== "PRE_POST_CHECK_FAILED" ||
+        this.claimValue?.status !== "FAILED" || current.documents.some(document => document.status !== "PENDING" ||
+          document.attemptCount !== 0 || document.attempts.length || document.requestHash !== null))
+      throw new Error("Recovery gate failed");
+    const event = JSON.stringify({ failureCategory: audit.failureCategory, failureDetail: audit.failureDetail,
+      originalError: current.error, failedAt: current.finishedAt, RecoveryAuthorizedAt: audit.authorizedAt,
+      RecoveryReason: audit.reason, RecoveryFromStatus: audit.recoveryFromStatus, RecoveryCount: audit.recoveryCount });
+    this.lifecycleVersion++;
+    this.closingStatus = "READY_TO_POST";
+    this.claimValue = { ...this.claimValue, status: "CLAIMED", updatedAt: audit.authorizedAt };
+    const recovered = { ...current, status: "READY_TO_POST" as const, lifecycleVersion: this.lifecycleVersion,
+      finishedAt: null, updatedAt: audit.authorizedAt, error: event };
+    this.executions.push(structuredClone(recovered));
+    return structuredClone(recovered);
+  }
 }
 
 class MemoryDocumentGateway implements GgfPostingDocumentGateway {
@@ -86,8 +108,7 @@ class MemoryDocumentGateway implements GgfPostingDocumentGateway {
     if (this.failPrepare) throw new Error("invalid local proposal");
     return { expectedCents: document.totalCents,
       payload: { Comments: `FactoryOne GGF ${closingId}`, type: document.type,
-        total: this.alterPayload ? `${document.totalCents}-changed` : document.totalCents,
-        AuthCookie: "must-not-persist" } };
+        total: this.alterPayload ? `${document.totalCents}-changed` : document.totalCents } };
   }
   async post(documentType: GgfPostingPlanDocument["type"]): Promise<GgfDocumentPostingResult> {
     const index = this.posts.length;
@@ -146,6 +167,64 @@ describe("GGF posting orchestration (offline; no SAP financial POST)", () => {
       closingVersion: 7, postingPlanVersion: 1 });
     expect(result.documents.every(document => document.status === "RECONCILED" && document.reconciliation === "MATCHED")).toBe(true);
     expect(JSON.stringify(store.executions)).not.toContain("must-not-persist");
+  });
+
+  it("runs the persisted-state checkpoint after claim and before any financial POST", async () => {
+    const { store, gateway, service } = await fixture();
+    let checked = false;
+    const result = await service.post(closingId, 1, async () => {
+      const latest = store.executions.at(-1)!;
+      expect(store.claimValue?.status).toBe("POSTING");
+      expect(latest.status).toBe("POSTING");
+      expect(latest.documents.every(document => document.status === "PENDING" && document.attemptCount === 0)).toBe(true);
+      expect(gateway.posts).toEqual([]);
+      checked = true;
+    });
+    expect(checked).toBe(true);
+    expect(gateway.posts).toHaveLength(3);
+    expect(result.status).toBe("POSTED");
+  });
+
+  it("requires explicit recovery for a zero-attempt pre-POST failure and preserves the failure event", async () => {
+    const { store, gateway, service } = await fixture();
+    const failed = await service.post(closingId, 1, async () => { throw new Error("null vs empty"); });
+    expect(failed.status).toBe("FAILED");
+    expect(store.claimValue?.status).toBe("FAILED");
+    expect(gateway.posts).toEqual([]);
+    await expect(service.resumeExecution(failed.executionId)).rejects.toThrow("FAILED execution requires explicit administrative treatment");
+
+    const recovered = await service.recoverPrePostFailedExecution(closingId, 1,
+      "Manual recovery after canonical empty-request checkpoint fix");
+    expect(recovered.status).toBe("READY_TO_POST");
+    expect(recovered.lifecycleVersion).toBe(10);
+    expect(recovered.error).toContain("PRE_POST_CHECKPOINT_SERIALIZATION_ERROR");
+    expect(recovered.error).toContain("PRE_POST_CHECK_FAILED");
+    expect(recovered.error).toContain("RecoveryFromStatus");
+    expect(store.claimValue?.status).toBe("CLAIMED");
+    expect(recovered.documents).toHaveLength(3);
+    expect(recovered.documents.every(document => document.status === "PENDING" && document.attemptCount === 0 &&
+      document.requestHash === null && document.docEntry === null)).toBe(true);
+    expect(gateway.posts).toEqual([]);
+  });
+
+  it("blocks explicit recovery when a document has any recorded attempt", async () => {
+    const { store, gateway, service } = await fixture();
+    const failed = await service.post(closingId, 1, async () => { throw new Error("checkpoint mismatch"); });
+    const changed = structuredClone(failed);
+    changed.documents[0]!.attemptCount = 1;
+    store.executions.push(changed);
+    await expect(service.recoverPrePostFailedExecution(closingId, 1, "authorized test recovery"))
+      .rejects.toThrow("Execution contains an attempt");
+    expect(gateway.posts).toEqual([]);
+  });
+
+  it("fails closed when the pre-POST checkpoint diverges", async () => {
+    const { store, gateway, service } = await fixture();
+    const result = await service.post(closingId, 1, async () => { throw new Error("checkpoint mismatch"); });
+    expect(result.status).toBe("FAILED");
+    expect(gateway.posts).toEqual([]);
+    expect(store.claimValue?.status).toBe("FAILED");
+    expect(result.documents.every(document => document.status === "PENDING")).toBe(true);
   });
 
   it("a pre-existing claim never reposts and stays uncertain when reconciliation finds no document", async () => {
@@ -218,7 +297,7 @@ describe("GGF posting orchestration (offline; no SAP financial POST)", () => {
       const planned = plans[index]!;
       const status = index === 0 ? "RECONCILED" as const : index === 1 ? "UNCERTAIN" as const : "PENDING" as const;
       const raw = index < 2 ? (await gateway.prepare(planned)).payload : null;
-      const request = raw ? { ...raw, AuthCookie: "[REDACTED]" } : {};
+      const request = raw ?? {};
       const requestHash = raw ? await calculateGgfRequestHash(request) : null;
       const completedAt = status === "RECONCILED" ? time : null;
       documents.push({ documentType: planned.type, order: planned.order, expectedCents: planned.totalCents,

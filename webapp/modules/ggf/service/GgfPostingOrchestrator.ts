@@ -1,6 +1,6 @@
 import { calculateGgfPostingPlanHash, type GgfPostingPlan, type GgfPostingPlanDocument } from "./GgfPostingPlan";
 import { calculateGgfExecutionId, calculateGgfRequestHash, type GgfDocumentExecutionStatus,
-  type GgfPostingExecutionIdentity } from "./GgfPostingExecution";
+  type GgfPostingExecutionIdentity, type GgfPrePostRecoveryAudit } from "./GgfPostingExecution";
 
 export type GgfPostingExecutionStatus =
   | "READY_TO_POST" | "POSTING" | "POSTING_PARTIAL" | "POSTING_UNCERTAIN" | "POSTED" | "FAILED"
@@ -95,6 +95,8 @@ export interface GgfPostingOrchestrationStore {
     documentLink?: { documentType: GgfPostingPlanDocument["type"]; docEntry: number; docNum: number;
       transId: number; postedAt: string };
   }): Promise<number>;
+  /** Explicit administrative path for a proven pre-POST failure; never used by resumeExecution. */
+  recoverPrePostFailedExecution(executionId: string, audit: GgfPrePostRecoveryAudit): Promise<GgfPostingExecution>;
 }
 
 export interface PreparedGgfPostingDocument {
@@ -273,7 +275,8 @@ export class GgfPostingOrchestrator {
     return execution;
   }
 
-  async post(closingId: string, postingPlanVersion: number): Promise<GgfPostingExecution> {
+  async post(closingId: string, postingPlanVersion: number,
+    beforeFirstPost?: () => Promise<void>): Promise<GgfPostingExecution> {
     const bundle = await this.store.load(closingId, postingPlanVersion);
     await assertPersistedIntegrity(bundle, closingId, postingPlanVersion);
     const executionId = await calculateGgfExecutionId(executionIdentity(bundle));
@@ -281,6 +284,28 @@ export class GgfPostingOrchestrator {
     const priorClaim = await this.store.getClaim(executionId);
     if (priorClaim) {
       if (execution && ["POSTED", "FAILED"].includes(execution.status)) return execution;
+      if (execution?.status === "READY_TO_POST" && priorClaim.status === "CLAIMED" &&
+          priorClaim.closingId === closingId && priorClaim.closingVersion === bundle.closingVersion &&
+          priorClaim.postingPlanVersion === postingPlanVersion && priorClaim.postingHash === bundle.plan.postingHash &&
+          execution.error?.includes('"failureCategory":"PRE_POST_CHECKPOINT_SERIALIZATION_ERROR"') &&
+          execution.documents.every(document => document.status === "PENDING" && document.attemptCount === 0 &&
+            document.requestHash === null && document.docEntry === null && document.docNum === null && document.transId === null)) {
+        await assertReady(bundle, closingId, postingPlanVersion);
+        const claimedAt = this.now();
+        const posting = { ...execution, status: "POSTING" as const, claimedAt, updatedAt: claimedAt,
+          claimedBy: priorClaim.claimedBy };
+        const lifecycleVersion = await this.store.transitionClosing({ closingId,
+          expectedVersion: bundle.lifecycleVersion, expectedStatus: "READY_TO_POST", status: "POSTING",
+          postingHash: bundle.plan.postingHash, postingPlanVersion, error: null });
+        const current = { ...posting, lifecycleVersion };
+        await this.store.append(current);
+        await this.store.updateClaim(executionId, "POSTING", claimedAt);
+        if (beforeFirstPost) {
+          try { await beforeFirstPost(); }
+          catch { return this.save(bundle, current, current.documents, "FAILED", "PRE_POST_CHECK_FAILED"); }
+        }
+        return this.execute(bundle, current);
+      }
       if (execution) return this.reconcileExisting(bundle, execution, priorClaim);
       const at = this.now();
       const documents = createDocumentLinks(bundle);
@@ -318,6 +343,12 @@ export class GgfPostingOrchestrator {
     const current = { ...posting, lifecycleVersion: postingVersion };
     await this.store.append(current);
     await this.store.updateClaim(executionId, "POSTING", claimedAt);
+    if (beforeFirstPost) {
+      try { await beforeFirstPost(); }
+      catch {
+        return this.save(bundle, current, current.documents, "FAILED", "PRE_POST_CHECK_FAILED");
+      }
+    }
     return this.execute(bundle, current);
   }
 
@@ -359,6 +390,66 @@ export class GgfPostingOrchestrator {
         claim.closingVersion !== identity.closingVersion || claim.postingPlanVersion !== identity.postingPlanVersion)
       return this.save(bundle, stored, stored.documents, "PAYLOAD_INTEGRITY_VIOLATION", "CLAIM_IDENTITY_CHANGED");
     return this.reconcileExisting(bundle, stored, claim);
+  }
+
+  async recoverPrePostFailedExecution(closingId: string, postingPlanVersion: number,
+    reason: string): Promise<GgfPostingExecution> {
+    if (!reason.trim()) throw new Error("An explicit recovery reason is required");
+    const bundle = await this.store.load(closingId, postingPlanVersion);
+    await assertPersistedIntegrity(bundle, closingId, postingPlanVersion);
+    const identity = executionIdentity(bundle);
+    const executionId = await calculateGgfExecutionId(identity);
+    const [execution, claim] = await Promise.all([
+      this.store.findExecution(executionId), this.store.getClaim(executionId)
+    ]);
+    let existingAudit: Record<string, unknown> | null = null;
+    try { existingAudit = JSON.parse(execution?.error ?? "null") as Record<string, unknown> | null; } catch { /* original error */ }
+    const auditMatches = existingAudit?.failureCategory === "PRE_POST_CHECKPOINT_SERIALIZATION_ERROR" &&
+      existingAudit.failureDetail === "NULL_VS_EMPTY_REQUEST_NORMALIZATION" &&
+      existingAudit.originalError === "PRE_POST_CHECK_FAILED" && existingAudit.RecoveryFromStatus === "FAILED" &&
+      existingAudit.RecoveryCount === 1 && existingAudit.RecoveryReason === reason.trim() &&
+      typeof existingAudit.RecoveryAuthorizedAt === "string";
+    const initialFailure = execution?.status === "FAILED" && execution.error === "PRE_POST_CHECK_FAILED" &&
+      claim?.status === "FAILED" && bundle.closingStatus === "FAILED";
+    const recordedRecovery = !!auditMatches && execution?.status === "FAILED" &&
+      ["FAILED", "CLAIMED"].includes(claim?.status ?? "") &&
+      ["FAILED", "READY_TO_POST"].includes(bundle.closingStatus);
+    const recoveredReady = !!auditMatches && execution?.status === "READY_TO_POST" &&
+      claim?.status === "CLAIMED" && bundle.closingStatus === "READY_TO_POST";
+    if (!execution || !claim || execution.executionId !== executionId ||
+        !(initialFailure || recordedRecovery || recoveredReady) ||
+        claim.executionId !== executionId || claim.postingHash !== identity.postingHash ||
+        claim.closingVersion !== identity.closingVersion || claim.postingPlanVersion !== identity.postingPlanVersion)
+      throw new Error("Only the exact FAILED pre-POST execution and claim can be recovered");
+    if (execution.documents.length !== 3 || bundle.plan.documents.length !== 3 ||
+        execution.documents.some((document, index) => {
+          const planned = bundle.plan.documents[index];
+          return !planned || document.order !== index + 1 || document.documentType !== planned.type ||
+            document.status !== "PENDING" || document.attemptCount !== 0 || document.attemptStartedAt !== null ||
+            document.responseReceivedAt !== null || document.requestHash !== null || document.docEntry !== null ||
+            document.docNum !== null || document.transId !== null || document.response !== null ||
+            document.attempts.length !== 0 || Object.keys(document.request).length !== 0;
+        }))
+      throw new Error("Execution contains an attempt or document evidence; manual recovery is blocked");
+
+    for (const document of bundle.plan.documents) {
+      const prepared = await this.gateway.prepare(document, identity);
+      const expectedHash = bundle.plan.technicalRequestHashes?.[document.type];
+      if (prepared.expectedCents !== document.totalCents || !expectedHash ||
+          await calculateGgfRequestHash(prepared.payload) !== expectedHash)
+        throw new Error("Prepared RequestHash differs from the immutable PostingPlan");
+      const evidence = await this.gateway.reconcile({ closingId, documentType: document.type,
+        expectedCents: document.totalCents, knownDocEntry: null, payload: prepared.payload });
+      if (!evidence.complete || evidence.matches.length !== 0)
+        throw new Error("External SAP document evidence is present or incomplete; recovery is blocked");
+    }
+
+    const at = auditMatches ? String(existingAudit!.RecoveryAuthorizedAt) : this.now();
+    const audit: GgfPrePostRecoveryAudit = {
+      authorizedAt: at, reason: reason.trim(), failureCategory: "PRE_POST_CHECKPOINT_SERIALIZATION_ERROR",
+      failureDetail: "NULL_VS_EMPTY_REQUEST_NORMALIZATION", recoveryFromStatus: "FAILED", recoveryCount: 1
+    };
+    return this.store.recoverPrePostFailedExecution(executionId, audit);
   }
 
   private async execute(bundle: PersistedGgfPostingBundle, initial: GgfPostingExecution): Promise<GgfPostingExecution> {

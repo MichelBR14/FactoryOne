@@ -57,6 +57,15 @@ export interface GgfPostingExecutionRecord {
   documents: GgfPostingDocumentLedger[];
 }
 
+export interface GgfPrePostRecoveryAudit {
+  authorizedAt: string;
+  reason: string;
+  failureCategory: "PRE_POST_CHECKPOINT_SERIALIZATION_ERROR";
+  failureDetail: "NULL_VS_EMPTY_REQUEST_NORMALIZATION";
+  recoveryFromStatus: "FAILED";
+  recoveryCount: number;
+}
+
 function canonical(value: unknown): unknown {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number" && Number.isFinite(value)) return Object.is(value, -0) ? 0 : value;
@@ -69,6 +78,19 @@ function canonical(value: unknown): unknown {
 
 export function canonicalPostingValue(value: unknown): string {
   return JSON.stringify(canonical(value));
+}
+
+/** Normalizes only the two supported representations of an empty persisted request. */
+export function canonicalizeCheckpointRequest(value: unknown): Record<string, unknown> {
+  if (value === null) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype)
+    throw new Error("Checkpoint request must be null or a plain JSON object");
+  return canonical(value) as Record<string, unknown>;
+}
+
+export function sameCanonicalCheckpointRequest(left: unknown, right: unknown): boolean {
+  return canonicalPostingValue(canonicalizeCheckpointRequest(left)) ===
+    canonicalPostingValue(canonicalizeCheckpointRequest(right));
 }
 
 async function sha256(value: unknown): Promise<string> {

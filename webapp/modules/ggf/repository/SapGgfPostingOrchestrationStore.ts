@@ -5,7 +5,7 @@ import { SapGgfExecutionIntegrityError, SapGgfPostingClaimRepository,
   SapGgfPostingExecutionRepository } from "./SapGgfPostingExecutionRepository";
 import { transitionClosing, type ClosingStatus } from "../service/GgfClosing";
 import { calculateGgfExecutionId, executionTotals, type GgfPostingDocumentLedger,
-  type GgfPostingExecutionRecord } from "../service/GgfPostingExecution";
+  type GgfPostingExecutionRecord, type GgfPrePostRecoveryAudit } from "../service/GgfPostingExecution";
 import type { GgfPostingOrchestrationStore, GgfPostingExecution, GgfPostingClaim,
   PersistedGgfPostingBundle } from "../service/GgfPostingOrchestrator";
 
@@ -154,5 +154,44 @@ export class SapGgfPostingOrchestrationStore implements GgfPostingOrchestrationS
       } : {}) };
     await this.closing.replace(current, next);
     return next.version;
+  }
+
+  async recoverPrePostFailedExecution(executionId: string, audit: GgfPrePostRecoveryAudit): Promise<GgfPostingExecution> {
+    const record = await this.executions.get(executionId);
+    const claim = await this.claims.get(executionId);
+    if (!record || !claim || !["FAILED", "READY"].includes(record.status) ||
+        !["PRE_POST_CHECK_FAILED"].includes(record.lastError ?? "") && !record.lastError?.includes('"failureCategory":"PRE_POST_CHECKPOINT_SERIALIZATION_ERROR"') ||
+        !["FAILED", "CLAIMED"].includes(claim.status) || record.identity.closingId !== claim.closingId ||
+        record.identity.closingVersion !== claim.closingVersion ||
+        record.identity.postingPlanVersion !== claim.postingPlanVersion || record.identity.postingHash !== claim.postingHash ||
+        record.documents.length !== 3 || record.documents.some(document => document.status !== "PENDING" ||
+          document.attemptCount !== 0 || document.attemptStartedAt !== null || document.responseReceivedAt !== null ||
+          document.requestHash !== null || document.request !== null || document.response !== null ||
+          document.sapDocEntry !== null || document.sapDocNum !== null || document.sapTransId !== null || document.attempts.length !== 0))
+      throw new Error("SAP Closing/Claim/Execution no longer satisfy the explicit zero-attempt recovery gate");
+    const currentClosing = await this.closing.get(record.identity.closingId);
+    const plan = await this.plans.get(record.identity.closingId, record.identity.postingPlanVersion);
+    if (!currentClosing || !["FAILED", "READY_TO_POST"].includes(currentClosing.status) ||
+        currentClosing.version < record.identity.closingVersion ||
+        (currentClosing.status === "FAILED" && currentClosing.version !== 6) ||
+        (currentClosing.status === "READY_TO_POST" && currentClosing.version !== 7) ||
+        currentClosing.postingHash === null || !plan || plan.postingHash !== record.identity.postingHash ||
+        currentClosing.sapMaterialRevaluationDocEntry !== null || currentClosing.sapMaterialRevaluationDocNum !== null ||
+        currentClosing.sapJournalEntryDocEntry !== null || currentClosing.sapJournalEntryDocNum !== null ||
+        currentClosing.sapJournalTransId !== null || !currentClosing.postingBasis ||
+        currentClosing.postingBasis.postingPlanHash !== record.identity.postingHash ||
+        (claim.status === "CLAIMED" && (currentClosing.status !== "READY_TO_POST" || claim.updatedAt !== audit.authorizedAt)) ||
+        (record.status === "READY" && (currentClosing.status !== "READY_TO_POST" || claim.status !== "CLAIMED")))
+      throw new Error("SAP Closing or PostingPlan differs from the FAILED pre-POST identity");
+
+    const event = await this.executions.recordPrePostRecoveryAudit(executionId, record.lastError!, audit);
+    await this.closing.recoverPrePostFailed(currentClosing);
+    await this.claims.recoverFailed(executionId, audit.authorizedAt);
+    await this.executions.finishPrePostRecovery(executionId, event);
+    const recovered = await this.findExecution(executionId);
+    if (!recovered || recovered.status !== "READY_TO_POST" || recovered.error !== event ||
+        recovered.documents.some(document => document.status !== "PENDING" || document.attemptCount !== 0))
+      throw new Error("Recovered execution failed final SAP readback");
+    return recovered;
   }
 }
