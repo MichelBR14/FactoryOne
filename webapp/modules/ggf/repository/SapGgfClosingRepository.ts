@@ -153,7 +153,7 @@ export class SapGgfClosingRepository implements GgfClosingStore {
     try { header = await this.client.get<SapRow>(`${CLOSE}(${quote(closingId)})`); }
     catch (error) { if (error instanceof ServiceLayerError && error.status === 404) return null; throw error; }
     if (!header) return null;
-    if (header.U_Status !== "POSTED" && header.U_Status !== "REOPENED" &&
+    if (header.U_Status !== "POSTED" && header.U_Status !== "REOPENED" && header.U_Status !== "POSTING_PARTIAL" &&
         (header.U_PostedAt || header.U_SapDocEntry || header.U_SapTransId)) {
       let claim: { hash: string; version: number } | null = null;
       try {
@@ -172,6 +172,19 @@ export class SapGgfClosingRepository implements GgfClosingStore {
         recalculatedHash: null, detectedAt: this.context.now?.() ?? new Date().toISOString(),
         ...safeIntegrityContext(this.context),
         divergentFields: ["Status/PostedLink"] });
+    }
+    if (header.U_Status === "POSTING_PARTIAL" &&
+        (header.U_PostedAt || header.U_SapDocEntry || header.U_SapDocNum || header.U_SapTransId) &&
+        (!header.U_PostedAt || !positiveNumber(header.U_SapDocEntry) || !positiveNumber(header.U_SapDocNum) ||
+          !positiveNumber(header.U_SapTransId))) {
+      return this.violation({ status: "INTEGRITY_VIOLATION", closingId,
+        version: Number(header.U_Version) || 0, closingStatus: String(header.U_Status),
+        sapDocumentType: null, sapDocEntry: positiveNumber(header.U_SapDocEntry),
+        sapDocNum: positiveNumber(header.U_SapDocNum), sapTransId: positiveNumber(header.U_SapTransId),
+        originalHash: typeof header.U_PostingHash === "string" ? header.U_PostingHash : null,
+        persistedHash: typeof header.U_PostingHash === "string" ? header.U_PostingHash : null,
+        recalculatedHash: null, detectedAt: this.context.now?.() ?? new Date().toISOString(),
+        ...safeIntegrityContext(this.context), divergentFields: ["Status/PostedLink"] });
     }
     try {
       const version = Number(header.U_LineVersion);

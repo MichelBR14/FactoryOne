@@ -214,6 +214,12 @@ describe("SAP native closing repository (offline)",()=>{
     const f=await postedFixture();f.header.U_Status="DRAFT";
     await expectViolation(f.repo,"Status/PostedLink");
   });
+  it("loads a partially posted closing with a complete reconciled document link without treating it as POSTED",async()=>{
+    const f=await postedFixture();f.header.U_Status="POSTING_PARTIAL";
+    const closing=await f.repo.get("CLOSE_1");
+    expect(closing).toMatchObject({status:"POSTING_PARTIAL",integrityStatus:"NOT_APPLICABLE",
+      sapMaterialRevaluationDocEntry:999001,sapMaterialRevaluationDocNum:999002,sapJournalTransId:999003});
+  });
   it("does not let a direct REOPENED status hide altered posted content",async()=>{
     const f=await postedFixture();f.header.U_Status="REOPENED";f.line.U_Allocated="2.00";
     await expectViolation(f.repo,"Lines/content");

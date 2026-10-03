@@ -297,11 +297,16 @@ export class SapGgfPostingExecutionRepository {
       });
       if (after.attemptCount < before.attemptCount || after.attempts.length < before.attempts.length || historyChanged)
         throw new Error("Posting document attempt history is immutable");
+    }
+    const expectedHeader = headerBody(record);
+    const documentBodies = record.documents.map(documentBody);
+    for (let index = 0; index < record.documents.length; index++) {
+      const after = record.documents[index]!;
       const code = documentCode(record.executionId, after.sequence);
-      const { Code: _code, Name, ...body } = documentBody(after);
+      const { Code: _code, Name, ...body } = documentBodies[index]!;
       await this.client.patch(`${DOC}(${quote(code)})`, { Name, ...body });
     }
-    const { Code: _code, Name, ...body } = headerBody(record);
+    const { Code: _code, Name, ...body } = expectedHeader;
     await this.client.patch(`${EXEC}(${quote(record.executionId)})`, { Name, ...body });
     const saved = await this.get(record.executionId);
     if (!saved) throw new Error("Posting execution update/readback failed");
