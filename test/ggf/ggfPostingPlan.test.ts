@@ -86,6 +86,14 @@ describe("GGF V2 persistent posting plan", () => {
     expect(await hashAtVersionOne(draft("INV-ALT"))).not.toBe(await hashAtVersionOne(draft("INV")));
   });
 
+  it("binds all future document request hashes into the posting plan", async () => {
+    const plan = { ...draft(), version: 1, closingVersion: 4, createdAt: "2026-09-30T20:00:00.000Z",
+      technicalRequestHashes: { MaterialRevaluation: "a".repeat(64), "JournalEntry.CPV": "b".repeat(64),
+        "JournalEntry.Closing": "c".repeat(64) }, postingHash: "" } as GgfPostingPlan;
+    const changed = { ...plan, technicalRequestHashes: { ...plan.technicalRequestHashes!, "JournalEntry.CPV": "d".repeat(64) } };
+    expect(await calculateGgfPostingPlanHash(plan)).not.toBe(await calculateGgfPostingPlanHash(changed));
+  });
+
   it("appends a new version and preserves the validated version", async () => {
     const repository = new LocalGgfPostingPlanRepository(new MemoryStorage());
     const first = await repository.append(draft());

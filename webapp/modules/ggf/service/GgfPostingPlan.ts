@@ -58,12 +58,15 @@ export interface GgfPostingPlanDocument {
 }
 
 export interface GgfPostingPlan {
+  scenarioId?: string;
   /** Explicitly isolated test ledger plan. Never produced by the product UI. */
   technicalOnly?: boolean;
   closingId: string;
   version: number;
   closingVersion: number | null;
   postingHash: string;
+  /** Request hashes are bound into the immutable plan before a financial execution starts. */
+  technicalRequestHashes?: Record<string, string>;
   createdAt: string;
   createdBy: string | null;
   status: GgfPostingPlanStatus;

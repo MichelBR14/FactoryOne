@@ -111,8 +111,7 @@ export class SapGgfClosingRepository implements GgfClosingStore {
     private readonly context: { user?: string; session?: string; now?: () => string } = {}) {}
 
   private async verificationClaim(closingId: string, basis?: GgfClosing["postingBasis"]): Promise<{ hash: string; version: number } | null> {
-    if ((basis?.documentType === "JournalEntry.CPV" || basis?.documentType === "JournalEntry.Closing") && basis.postingPlanHash &&
-        basis.postingClosingVersion && basis.postingPlanVersion) {
+    if (basis?.postingPlanHash && basis.postingClosingVersion && basis.postingPlanVersion) {
       const executionId = await calculateGgfExecutionId({ closingId, closingVersion: basis.postingClosingVersion,
         postingPlanVersion: basis.postingPlanVersion, postingHash: basis.postingPlanHash });
       let row: SapRow | undefined;
@@ -120,7 +119,7 @@ export class SapGgfClosingRepository implements GgfClosingStore {
       catch (error) { if (error instanceof ServiceLayerError && error.status === 404) return null; throw error; }
       if (!row || row.Code !== executionId || row.U_ExecutionId !== executionId || row.U_ClosingId !== closingId ||
           row.U_PostingHash !== basis.postingPlanHash || Number(row.U_ClosingVersion) !== basis.postingClosingVersion ||
-          Number(row.U_PostingPlanVersion) !== basis.postingPlanVersion)
+          Number(row.U_PostingPlanVersion) !== basis.postingPlanVersion || row.U_Status !== "POSTED")
         throw new Error("Execution claim identity differs from the posted closing basis");
       return { hash: String(row.U_PostingHash), version: Number(row.U_ClosingVersion) };
     }

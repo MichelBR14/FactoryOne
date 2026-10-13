@@ -136,6 +136,27 @@ async function fixture() {
   return { store, gateway, service };
 }
 
+async function partialFixture() {
+  const f = await fixture();
+  const execution = structuredClone(f.store.executions[0]!);
+  const planned = f.store.plan.documents.find(document => document.order === 1)!;
+  const prepared = await f.gateway.prepare(planned);
+  const request = prepared.payload;
+  const requestHash = await calculateGgfRequestHash(request);
+  execution.status = "POSTING_PARTIAL";
+  execution.documents[0] = { ...execution.documents[0]!, request, requestHash, status: "RECONCILED",
+    reconciliation: "MATCHED", attemptCount: 1, attemptStartedAt: time, responseReceivedAt: time,
+    reconciledAt: time, docEntry: 44, docNum: 7, transId: 2311,
+    response: { DocEntry: 44 }, attempts: [{ attempt: 1, requestHash, startedAt: time,
+      responseReceivedAt: time, status: "RECONCILED", sanitizedError: null }] };
+  f.store.executions = [execution];
+  f.store.closingStatus = "POSTING_PARTIAL";
+  f.store.claimValue = { executionId: execution.executionId, closingId, postingHash: execution.postingHash,
+    closingVersion: execution.closingVersion, postingPlanVersion: execution.postingPlanVersion,
+    status: "POSTING_PARTIAL", updatedAt: time, claimedAt: time, claimedBy: actor };
+  return f;
+}
+
 describe("GGF posting orchestration (offline; no SAP financial POST)", () => {
   it("blocks a blocked plan, divergent hash, missing metadata and integrity violation before claim", async () => {
     const { store, service } = await fixture();
@@ -325,6 +346,39 @@ describe("GGF posting orchestration (offline; no SAP financial POST)", () => {
     expect(gateway.reconciliations).toEqual([plans[1]!.type]);
     expect(resumed.documents.map(document => document.status)).toEqual(["RECONCILED", "UNCERTAIN", "PENDING"]);
     expect(resumed.documents[2]?.dependencies).toEqual(plans[2]!.dependencies);
+  });
+
+  it("continues exactly the selected next document and leaves later documents pending", async () => {
+    const { store, gateway, service } = await partialFixture();
+    const result = await service.postNextDocument(store.executions[0]!.executionId, "JournalEntry.CPV");
+    expect(gateway.posts).toEqual(["JournalEntry.CPV"]);
+    expect(result.status).toBe("POSTING_PARTIAL");
+    expect(result.documents.map(document => document.status)).toEqual(["RECONCILED", "RECONCILED", "PENDING"]);
+    expect(result.documents[1]).toMatchObject({ attemptCount: 1, requestHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      docEntry: 100, docNum: 200, transId: 300 });
+    expect(result.documents[2]).toMatchObject({ attemptCount: 0, requestHash: null, status: "PENDING" });
+  });
+
+  it("blocks a skipped or already dispatched document before any new POST", async () => {
+    const skipped = await partialFixture();
+    await expect(skipped.service.postNextDocument(skipped.store.executions[0]!.executionId, "JournalEntry.Closing"))
+      .rejects.toThrow("single next undispatched document");
+    expect(skipped.gateway.posts).toEqual([]);
+
+    const incomplete = await partialFixture();
+    incomplete.store.executions[0]!.documents[0]!.status = "PENDING";
+    await expect(incomplete.service.postNextDocument(incomplete.store.executions[0]!.executionId, "JournalEntry.CPV"))
+      .rejects.toThrow("single next undispatched document");
+    expect(incomplete.gateway.posts).toEqual([]);
+  });
+
+  it("does not send when the bounded continuation finds existing external document evidence", async () => {
+    const { store, gateway, service } = await partialFixture();
+    gateway.posts.push("JournalEntry.CPV");
+    await expect(service.postNextDocument(store.executions[0]!.executionId, "JournalEntry.CPV"))
+      .rejects.toThrow("Existing or incomplete SAP document evidence");
+    expect(gateway.posts).toEqual(["JournalEntry.CPV"]);
+    expect(store.executions.at(-1)!.documents[1]).toMatchObject({ status: "PENDING", attemptCount: 0 });
   });
 
   it("blocks resume when the reconstructed request hash differs and never resends", async () => {

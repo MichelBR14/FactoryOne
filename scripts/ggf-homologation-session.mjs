@@ -6,7 +6,7 @@ import { createLocalTestHttpsTransport } from "./ggf-local-test-https-transport.
 
 const READ_ACTIONS = new Set([
   "CompanyService_GetAdvancedGLAccount", "CompanyService_GetFinancePeriods",
-  "CompanyService_GetFinancePeriod", "SeriesService_GetDefaultSeries",
+  "CompanyService_GetFinancePeriod", "CompanyService_GetAdminInfo", "SeriesService_GetDefaultSeries",
   "MaterialRevaluationFIFOService_GetMaterialRevaluationFIFO"
 ]);
 const WRITABLE = new Set(["Items", "ProductTrees", "ProductionOrders", "InventoryGenEntries"]);
@@ -55,6 +55,10 @@ export async function openHomologationSession(transportOverride) {
   let phase7dClosingId = null;
   let phase7dExecutionId = null;
   let phase7dPostingHash = null;
+  let phase7eContext = null;
+  const phase7eFinancialAttempts = new Set();
+  let phase7eNextDocumentIndex = 0;
+  let phase7eAllowedDocumentTypes = new Set(["MaterialRevaluation", "JournalEntry.CPV", "JournalEntry.Closing"]);
   const assertNonFinancialTlsScope = (operation) => {
     if (localCertificateException && !["PPLAN_METADATA", "PPLAN_SNAPSHOT", "GGF_SCHEMA_VERSION",
         "PEXEC_PDOC_TECHNICAL_LEDGER", "PHASE7D_TECHNICAL_LEDGER"].includes(operation))
@@ -280,6 +284,147 @@ export async function openHomologationSession(transportOverride) {
         throw new Error("Invalid Phase 7D execution identity");
       phase7dClosingId = closingId; phase7dExecutionId = executionId; phase7dPostingHash = postingHash;
       return true;
+    },
+    bindTechnicalPhase7EContext(closingId, executionId, postingHash, requests, requestHashes, orderIds = null,
+      reconciledDocumentTypes = [], allowedDocumentTypes = ["MaterialRevaluation", "JournalEntry.CPV", "JournalEntry.Closing"]) {
+      const orderedTypes = ["MaterialRevaluation", "JournalEntry.CPV", "JournalEntry.Closing"];
+      if (!/^TECH7E-20261001-[A-F0-9]{10}$/.test(String(closingId)) ||
+          !/^F1EX[a-f0-9]{40}$/.test(String(executionId)) || !/^[a-f0-9]{64}$/.test(String(postingHash)) ||
+          !requests || Object.keys(requests).sort().join("|") !==
+            "JournalEntry.CPV|JournalEntry.Closing|MaterialRevaluation" ||
+          !requestHashes || Object.keys(requestHashes).sort().join("|") !==
+            "JournalEntry.CPV|JournalEntry.Closing|MaterialRevaluation" ||
+          Object.values(requestHashes).some(hash => !/^[a-f0-9]{64}$/.test(String(hash))) ||
+          !orderIds || Object.keys(orderIds).sort().join("|") !==
+            "JournalEntry.CPV|JournalEntry.Closing|MaterialRevaluation" ||
+          Object.values(orderIds).some(id => typeof id !== "string" || id.length > 30 || !/^7E-(MR-01|CPV-02|CLS-03)-[A-F0-9]{16}$/.test(id)) ||
+          !Array.isArray(reconciledDocumentTypes) || reconciledDocumentTypes.some((type, index) => orderedTypes[index] !== type) ||
+          !Array.isArray(allowedDocumentTypes) || !allowedDocumentTypes.length ||
+          allowedDocumentTypes.some(type => !orderedTypes.includes(type)) ||
+          new Set(allowedDocumentTypes).size !== allowedDocumentTypes.length ||
+          allowedDocumentTypes.some(type => orderedTypes.indexOf(type) < reconciledDocumentTypes.length))
+        throw new Error("Invalid Phase 7E identity or request set");
+      phase7eContext = { closingId, executionId, postingHash,
+        requests: structuredClone(requests), requestHashes: structuredClone(requestHashes), orderIds: structuredClone(orderIds) };
+      phase7eFinancialAttempts.clear();
+      phase7eNextDocumentIndex = reconciledDocumentTypes.length;
+      phase7eAllowedDocumentTypes = new Set(allowedDocumentTypes);
+      return true;
+    },
+    postTechnicalPhase7ERecord(name, body) {
+      assertNonFinancialTlsScope("PHASE7D_TECHNICAL_LEDGER");
+      const context = phase7eContext;
+      if (!context || Object.keys(body ?? {}).some(key => key !== "Name" && key !== "Code" && !key.startsWith("U_")))
+        throw new Error("Phase 7E ledger write lacks bound identity or contains unexpected fields");
+      if (name === "FBO_GGF_PPLAN") {
+        let plan;
+        try { plan = JSON.parse(String(body.U_PlanSnapshot)); } catch { throw new Error("Invalid Phase 7E plan snapshot"); }
+        if (body.U_ClosingId !== context.closingId || body.U_PostingHash !== context.postingHash ||
+            body.U_Status !== "VALIDATED" || body.U_PostingPlanVersion !== "1" || body.U_Version !== "4" ||
+            plan.scenarioId !== "PHASE7E_TECHNICAL" || plan.postingHash !== context.postingHash || plan.closingId !== context.closingId ||
+            plan.technicalRequestHashes === undefined ||
+            JSON.stringify(plan.technicalRequestHashes) !== JSON.stringify(context.requestHashes) ||
+            plan.totalGgf !== "120" || plan.totalMod !== "80" || plan.totalStock !== "100" ||
+            plan.totalCpv !== "100" || plan.totalBlocked !== "0" || plan.documents?.length !== 3 ||
+            plan.documents.map(row => row.type).join("|") !==
+              "MaterialRevaluation|JournalEntry.CPV|JournalEntry.Closing" ||
+            plan.documents.some(row => row.payload !== null || row.status !== "VALIDATED"))
+          throw new Error("PostingPlan differs from the exact Phase 7E authorized scenario");
+      } else if (name === "FBO_GGF_CLOSE") {
+        if (body.Code !== context.closingId || body.U_CompanyDB !== AUTHORIZED_COMPANY ||
+            body.U_PeriodStart !== "2026-10-01" || body.U_PeriodEnd !== "2026-10-01" ||
+            body.U_Branch !== "1") throw new Error("Closing identity differs from Phase 7E");
+      } else if (name === "FBO_GGF_CLINE") {
+        const row = Number(String(body.Code).split(".").at(-1));
+        const expected = row === 1 ? ["5.04.01.01.03", "1.20", "0.60"] :
+          row === 2 ? ["5.04.01.01.04", "0.80", "0.40"] : null;
+        const expectedOrderId = row === 1 ? context.orderIds.MaterialRevaluation : context.orderIds["JournalEntry.CPV"];
+        if (body.U_ClosingId !== context.closingId || !expected || body.U_Account !== expected[0] ||
+            body.U_Allocated !== expected[1] || body.U_Revaluation !== expected[2] || body.U_Version !== "2" ||
+            body.U_OrderId !== expectedOrderId || String(body.U_OrderId).length > 30)
+          throw new Error("Closing audit line differs from Phase 7E category values");
+      } else if (name === "FBO_GGF_CLAIM") {
+        if (body.Code !== context.executionId || body.U_ExecutionId !== context.executionId ||
+            body.U_ClosingId !== context.closingId || body.U_ClosingVersion !== "4" ||
+            body.U_PostingPlanVersion !== "1" || body.U_PostingHash !== context.postingHash ||
+            body.U_Status !== "CLAIMED") throw new Error("Claim differs from Phase 7E identity");
+      } else if (name === "FBO_GGF_PEXEC") {
+        if (body.Code !== context.executionId || body.U_ClosingId !== context.closingId ||
+            body.U_ClosingVersion !== "4" || body.U_PostingPlanVersion !== "1" ||
+            body.U_PostingHash !== context.postingHash ||
+            !["READY", "POSTING", "POSTING_PARTIAL", "POSTING_UNCERTAIN", "POSTED", "FAILED"].includes(body.U_Status))
+          throw new Error("Execution differs from Phase 7E identity");
+      } else if (name === "FBO_GGF_PDOC") {
+        const sequence = Number(body.U_Sequence);
+        const type = [null, "MaterialRevaluation", "JournalEntry.CPV", "JournalEntry.Closing"][sequence];
+        const amount = [null, "100", "100", "200"][sequence];
+        if (body.U_ExecutionId !== context.executionId || body.U_ClosingId !== context.closingId ||
+            body.U_ClosingVersion !== "4" || body.U_PostingPlanVersion !== "1" ||
+            body.U_PostingHash !== context.postingHash || body.U_DocumentType !== type ||
+            body.U_PlannedAmount !== amount || body.U_Currency !== "R$" ||
+            !["PENDING", "SENDING", "SENT", "RECONCILED", "UNCERTAIN", "FAILED"].includes(body.U_Status))
+          throw new Error("PDOC differs from Phase 7E identity or authorized document set");
+        if (body.U_Status === "SENDING" && (!body.U_Request || body.U_AttemptCount !== "1" ||
+            !body.U_AttemptStartedAt || body.U_RequestHash !== context.requestHashes[type] ||
+            JSON.stringify(JSON.parse(body.U_Request)) !== JSON.stringify(context.requests[type])))
+          throw new Error("SENDING PDOC must persist its exact authorized request before POST");
+      } else throw new Error("Phase 7E ledger write outside approved UDOs");
+      return request(name, "POST", body);
+    },
+    patchTechnicalPhase7ERecord(path, body) {
+      assertNonFinancialTlsScope("PHASE7D_TECHNICAL_LEDGER");
+      const match = /^(FBO_GGF_CLOSE|FBO_GGF_CLAIM|FBO_GGF_PEXEC|FBO_GGF_PDOC)\('([^']+)'\)$/.exec(path);
+      const context = phase7eContext;
+      if (!match || !context || Object.keys(body ?? {}).some(key => key !== "Name" && !key.startsWith("U_")))
+        throw new Error("Phase 7E patch outside bound technical ledger");
+      const [, entity, code] = match;
+      if (entity === "FBO_GGF_CLOSE") {
+        const recovery = code === context.closingId && body.U_Status === "READY_TO_POST" && body.U_Version === "7" &&
+          Object.keys(body).sort().join("|") === "U_Status|U_Version";
+        const normal = code === context.closingId && body.U_CompanyDB === AUTHORIZED_COMPANY &&
+          body.U_PeriodStart === "2026-10-01" && body.U_PeriodEnd === "2026-10-01" && body.U_Branch === "1" &&
+          ["CALCULATED", "VALIDATED", "READY_TO_POST", "POSTING", "POSTING_PARTIAL", "POSTING_UNCERTAIN", "POSTED", "FAILED"].includes(body.U_Status);
+        if (code !== context.closingId || (!recovery && !normal))
+          throw new Error("Phase 7E closing transition outside exact lifecycle");
+      }
+      if (entity === "FBO_GGF_CLAIM" && (code !== context.executionId ||
+          !["POSTING", "POSTING_PARTIAL", "POSTING_UNCERTAIN", "POSTED", "FAILED", "CLAIMED"].includes(body.U_Status) ||
+          (body.U_Status === "CLAIMED" && Object.keys(body).some(key => !["U_Status", "U_UpdatedAt"].includes(key)))))
+        throw new Error("Phase 7E claim transition outside exact lifecycle");
+      if (entity === "FBO_GGF_PEXEC") {
+        const auditOnly = Object.keys(body).length === 1 && typeof body.U_LastError === "string";
+        const reconciliationTotals = code === context.executionId && body.U_Status === "POSTING_PARTIAL" &&
+          body.U_ClosingId === context.closingId && body.U_PostingHash === context.postingHash &&
+          body.U_TotalExpected === "400" && body.U_TotalPosted === "100" && body.U_TotalReconciled === "100" &&
+          Object.keys(body).sort().join("|") ===
+            "U_ClosingId|U_PostingHash|U_Status|U_TotalExpected|U_TotalPosted|U_TotalReconciled";
+        const recoveredReady = code === context.executionId && body.U_Status === "READY" && body.U_FinishedAt === "" &&
+          Object.keys(body).sort().join("|") === "U_FinishedAt|U_Status";
+        const statusPatch = code === context.executionId && body.U_ClosingId === context.closingId &&
+          body.U_PostingHash === context.postingHash &&
+          ["POSTING", "POSTING_PARTIAL", "POSTING_UNCERTAIN", "POSTED", "FAILED", "READY"].includes(body.U_Status) &&
+          (body.U_Status !== "READY" || Object.keys(body).every(key => ["U_Status", "U_FinishedAt"].includes(key)));
+        if (code !== context.executionId || (!auditOnly && !statusPatch && !recoveredReady && !reconciliationTotals))
+          throw new Error("Phase 7E execution transition outside exact lifecycle");
+      }
+      if (entity === "FBO_GGF_PDOC" && (body.U_ExecutionId !== context.executionId ||
+          body.U_ClosingId !== context.closingId || !["PENDING", "SENDING", "SENT", "RECONCILED", "UNCERTAIN", "FAILED"].includes(body.U_Status)))
+        throw new Error("Phase 7E PDOC transition outside exact lifecycle");
+      return request(path, "PATCH", body);
+    },
+    postTechnicalPhase7EDocument(documentType, body) {
+      const context = phase7eContext;
+      const orderedTypes = ["MaterialRevaluation", "JournalEntry.CPV", "JournalEntry.Closing"];
+      const endpoint = documentType === "MaterialRevaluation" ? "MaterialRevaluation" :
+        documentType === "JournalEntry.CPV" || documentType === "JournalEntry.Closing" ? "JournalEntries" : null;
+      if (!context || !endpoint || phase7eFinancialAttempts.has(documentType) ||
+          !phase7eAllowedDocumentTypes.has(documentType) ||
+          orderedTypes[phase7eNextDocumentIndex] !== documentType ||
+          JSON.stringify(body) !== JSON.stringify(context.requests[documentType]))
+        throw new Error("Financial POST differs from the one authorized Phase 7E request");
+      phase7eFinancialAttempts.add(documentType);
+      phase7eNextDocumentIndex++;
+      return request(endpoint, "POST", body);
     },
     postTechnicalPhase7DRecord(name, body) {
       assertNonFinancialTlsScope("PHASE7D_TECHNICAL_LEDGER");

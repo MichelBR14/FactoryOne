@@ -1,5 +1,6 @@
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { parseEnv } from "node:util";
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { build } from "esbuild";
@@ -23,8 +24,8 @@ export { ServiceLayerError } from "./webapp/core/service/errors.ts";
 }
 
 async function run(operation) {
-  if (!["plan","install","smoke","verify-exposure"].includes(operation))
-    throw new Error("Choose plan, install, smoke or verify-exposure");
+  if (!["plan","snapshot-phase7b","install-phase7b","smoke","verify-exposure"].includes(operation))
+    throw new Error("Choose plan, snapshot-phase7b, install-phase7b, smoke or verify-exposure");
   const env=parseEnv(await readFile(".env","utf8"));
   const url=new URL(env.FBO_SL_URL);
   const localCertificateException=process.env.FBO_SL_ALLOW_INVALID_CERTIFICATE==="1";
@@ -42,10 +43,65 @@ async function run(operation) {
   };
   const client={
     get:async(path)=>unwrap(await sap.get(path)),
-    post:async(path,body)=>unwrap(await sap.postMetadata(path,body)),
+    post:async(path,body)=>{
+      const result=await sap.postMetadata(path,body);
+      if(!result.ok)throw new ServiceLayerError(`SAP metadata write rejected HTTP ${result.status}`,
+        result.status,result.errorCode);
+      return result.data;
+    },
     patch:async(path,body)=>unwrap(await sap.patchSetup(path,body))
   };
+  const installer=new MetadataInstaller(client);
   const exposure=[];
+  function assertAdditivePhase7B(plan) {
+    const allowedTables = new Set(["FBO_GGF_CLAIM", "FBO_GGF_PEXEC", "FBO_GGF_PDOC"]);
+    const rejected = plan.actions.filter(action => {
+      if (!action.description.startsWith("Criar ")) return true;
+      const table = String(action.body?.TableName ?? action.body?.Code ?? "").replace(/^@/, "");
+      if (!allowedTables.has(table)) return true;
+      if (action.entity === "UserTablesMD") return !["FBO_GGF_PEXEC", "FBO_GGF_PDOC"].includes(table);
+      if (action.entity === "UserFieldsMD") return false;
+      if (action.entity === "UserObjectsMD") return !["FBO_GGF_PEXEC", "FBO_GGF_PDOC"].includes(table);
+      return true;
+    });
+    if (plan.module !== "ggf" || plan.warnings.length || rejected.length)
+      throw new Error(`Phase 7B metadata plan is not strictly additive or contains a divergence: ${JSON.stringify({module:plan.module,warnings:plan.warnings,rejected:rejected.map(action=>({entity:action.entity,description:action.description,body:action.body}))})}`);
+  }
+  async function snapshotPhase7B(plan) {
+    assertAdditivePhase7B(plan);
+    const metadata = unwrap(await sap.get("$metadata", "application/xml"));
+    if (typeof metadata !== "string") throw new Error("SAP_METADATA_UNAVAILABLE: metadata snapshot is not XML");
+    const objectStates = [];
+    for (const code of ["FBO_GGF_CLAIM", "FBO_GGF_PEXEC", "FBO_GGF_PDOC"]) {
+      let state;
+      try {
+        const row = unwrap(await sap.get(`UserObjectsMD('${code}')`));
+        state = { code, exists: true, tableName: row.TableName, objectType: row.ObjectType,
+          applyAuthorization: row.ApplyAuthorization, canDelete: row.CanDelete };
+      } catch (error) {
+        if (!(error instanceof ServiceLayerError && error.status === 404)) throw error;
+        state = { code, exists: false };
+      }
+      objectStates.push(state);
+    }
+    const safeSnapshot = {
+      company: TEST_COMPANY, capturedAt: new Date().toISOString(), mode: "read-only-pre-install",
+      metadataSha256: createHash("sha256").update(metadata).digest("hex"),
+      exposedExecutionEntities: ["FBO_GGF_PEXEC", "FBO_GGF_PDOC"].map(name => ({
+        name, present: metadata.includes(`<EntityType Name="${name}"`)
+      })),
+      objects: objectStates,
+      plan: { version: plan.version, actionCount: plan.actions.length,
+        warnings: plan.warnings, actions: plan.actions.map(action => ({ kind: action.kind,
+          entity: action.entity, description: action.description })) },
+      destructiveActions: 0, incompatibleChanges: 0, renames: 0, removals: 0,
+      tlsCertificateVerified: !localCertificateException
+    };
+    await mkdir(".local/ggf", { recursive: true, mode: 0o700 });
+    await writeFile(".local/ggf/phase7b-metadata-pre-install.json", `${JSON.stringify(safeSnapshot, null, 2)}\n`,
+      { mode: 0o600 });
+    return safeSnapshot;
+  }
   async function verifyExposure(set) {
     const nodes=new Set();
     const samples=set.module==="ggf"?16:8;
@@ -78,6 +134,26 @@ async function run(operation) {
     await verifyExposure(GGF_CLOSING_METADATA);
     return {company:TEST_COMPANY,mode:"read-only",exposure};
   }
+  if (operation === "snapshot-phase7b") {
+    const plan = await installer.plan(GGF_CLOSING_METADATA);
+    return await snapshotPhase7B(plan);
+  }
+  if (operation === "install-phase7b") {
+    const snapshot = JSON.parse(await readFile(".local/ggf/phase7b-metadata-pre-install.json", "utf8"));
+    if (snapshot.company !== TEST_COMPANY || snapshot.mode !== "read-only-pre-install")
+      throw new Error("Approved Phase 7B pre-install snapshot is missing or has the wrong company");
+    const plan = await installer.plan(GGF_CLOSING_METADATA);
+    assertAdditivePhase7B(plan);
+    const currentActions = plan.actions.map(action => ({ kind: action.kind, entity: action.entity,
+      description: action.description }));
+    if (JSON.stringify(currentActions) !== JSON.stringify(snapshot.plan.actions))
+      throw new Error("SAP metadata changed after the approved pre-install snapshot; installation stopped");
+    const result = await installer.install(GGF_CLOSING_METADATA, undefined, verifyExposure);
+    if (result.failed) throw new Error(`Metadata installation stopped at ${result.failed.action.description}: ${result.failed.message}`);
+    return { company: TEST_COMPANY, mode: "metadata-only", created: result.done.length,
+      versionRecorded: result.versionRecorded, exposureDuringInstall: exposure,
+      destructiveActions: 0, renames: 0, removals: 0, incompatibleChanges: 0 };
+  }
   if (operation==="smoke") {
     const repo=new SapGgfClosingRepository(client);
     const existing=await repo.get(SMOKE_ID);
@@ -96,7 +172,6 @@ async function run(operation) {
       throw new Error("SAP closing smoke reread differs");
     return {company:TEST_COMPANY,closingId:SMOKE_ID,status:saved.status,version:saved.version,created:true};
   }
-  const installer=new MetadataInstaller(client);
   const sets=[CORE_METADATA,GGF_CLOSING_METADATA];
   const plans=[];
   for (const set of sets) {
@@ -107,16 +182,7 @@ async function run(operation) {
       throw new Error(`Metadata divergence for ${set.module}: ${plan.warnings.join(" | ")}`);
   }
   if (operation==="plan") return {company:TEST_COMPANY,mode:"read-only",plans};
-  const installed=[];
-  for (const set of sets) {
-    let result;
-    try { result=await installer.install(set,undefined,verifyExposure); }
-    catch(error) { throw new Error(`${set.module} metadata install/read: ${error instanceof Error?error.message:String(error)}`); }
-    installed.push({module:set.module,created:result.done.length,failed:result.failed?.action.description??null,
-      versionRecorded:result.versionRecorded});
-    if (result.failed) throw new Error(`Metadata installation stopped at ${result.failed.action.description}: ${result.failed.message}`);
-  }
-  return {company:TEST_COMPANY,mode:"metadata-only",installed,exposure};
+  return {company:TEST_COMPANY,mode:"read-only",plans};
   } finally { await sap.close(); }
 }
 

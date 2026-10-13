@@ -158,10 +158,11 @@ async function assertPersistedIntegrity(bundle: PersistedGgfPostingBundle, reque
     throw new Error("Persisted closing/PostingPlan hash differs");
 }
 
-async function assertReady(bundle: PersistedGgfPostingBundle, requestedClosingId: string, planVersion: number): Promise<void> {
+async function assertReady(bundle: PersistedGgfPostingBundle, requestedClosingId: string, planVersion: number,
+  allowedClosingStatuses: string[] = ["READY_TO_POST"]): Promise<void> {
   await assertPersistedIntegrity(bundle, requestedClosingId, planVersion);
   const plan = bundle.plan;
-  if (bundle.closingStatus !== "READY_TO_POST") throw new Error("Persisted closing/PostingPlan status differs");
+  if (!allowedClosingStatuses.includes(bundle.closingStatus)) throw new Error("Persisted closing/PostingPlan status differs");
   if (plan.status !== "VALIDATED" || plan.totalBlocked !== "0" || plan.totalDifference !== "0" ||
       plan.accountingDifference !== "0" || plan.blockers.length || plan.postingBlocked !== true)
     throw new Error("PostingPlan is blocked or not reconciled");
@@ -390,6 +391,86 @@ export class GgfPostingOrchestrator {
         claim.closingVersion !== identity.closingVersion || claim.postingPlanVersion !== identity.postingPlanVersion)
       return this.save(bundle, stored, stored.documents, "PAYLOAD_INTEGRITY_VIOLATION", "CLAIM_IDENTITY_CHANGED");
     return this.reconcileExisting(bundle, stored, claim);
+  }
+
+  /** Posts exactly one explicitly selected next document and never advances the sequence. */
+  async postNextDocument(executionId: string, documentType: GgfPostingPlanDocument["type"]): Promise<GgfPostingExecution> {
+    const stored = await this.store.findExecution(executionId);
+    if (!stored) throw new Error("Posting execution does not exist in SAP");
+    const bundle = await this.store.load(stored.closingId, stored.postingPlanVersion);
+    await assertReady(bundle, stored.closingId, stored.postingPlanVersion, ["POSTING_PARTIAL"]);
+    const identity = executionIdentity(bundle);
+    if (await calculateGgfExecutionId(identity) !== executionId || stored.executionId !== executionId ||
+        stored.closingVersion !== identity.closingVersion || stored.postingHash !== identity.postingHash)
+      throw new Error("Persisted execution identity differs from Closing and PostingPlan");
+    if (stored.status !== "POSTING_PARTIAL" || bundle.closingStatus !== "POSTING_PARTIAL")
+      throw new Error("Only a partial execution can continue one document");
+    const claim = await this.store.getClaim(executionId);
+    if (!claim || claim.executionId !== executionId || claim.closingId !== stored.closingId ||
+        claim.closingVersion !== stored.closingVersion || claim.postingPlanVersion !== stored.postingPlanVersion ||
+        claim.postingHash !== stored.postingHash || claim.status !== "POSTING_PARTIAL")
+      throw new Error("Persisted claim differs from the partial execution");
+    const ordered = [...stored.documents].sort((left, right) => left.order - right.order);
+    if (ordered.length !== bundle.plan.documents.filter(document => document.status !== "NOT_REQUIRED").length ||
+        ordered.some((document, index) => document.order !== index + 1))
+      throw new Error("Persisted document sequence differs from PostingPlan");
+    const nextIndex = ordered.findIndex(document => document.status !== "RECONCILED");
+    const selected = ordered[nextIndex];
+    if (!selected || selected.documentType !== documentType || selected.status !== "PENDING" ||
+        selected.attemptCount !== 0 || selected.attemptStartedAt !== null || selected.requestHash !== null ||
+        selected.docEntry !== null || selected.docNum !== null || selected.transId !== null ||
+        Object.keys(selected.request).length !== 0 || ordered.slice(nextIndex + 1).some(document =>
+          document.status !== "PENDING" || document.attemptCount !== 0 || document.requestHash !== null ||
+          document.docEntry !== null || document.docNum !== null || document.transId !== null))
+      throw new Error("Selected document is not the single next undispatched document");
+    if (ordered.slice(0, nextIndex).some(document => document.status !== "RECONCILED" ||
+        document.reconciliation !== "MATCHED"))
+      throw new Error("Previous documents must be reconciled before continuation");
+    const planned = bundle.plan.documents.find(document => document.type === documentType && document.order === selected.order);
+    if (!planned) throw new Error("Selected document is missing from the immutable PostingPlan");
+    const prepared = await this.gateway.prepare(planned, { closingId: bundle.closingId,
+      closingVersion: bundle.closingVersion, postingPlanVersion: bundle.plan.version, postingHash: bundle.plan.postingHash });
+    if (prepared.expectedCents !== planned.totalCents || !Object.keys(prepared.payload).length)
+      throw new Error("Prepared document differs from the immutable PostingPlan");
+    const request = sanitize(prepared.payload) as Record<string, unknown>;
+    const requestHash = await calculateGgfRequestHash(request);
+    const expectedHash = bundle.plan.technicalRequestHashes?.[documentType];
+    if (!expectedHash || requestHash !== expectedHash)
+      throw new Error("Prepared RequestHash differs from the immutable PostingPlan");
+    const beforePost = await this.gateway.reconcile({ closingId: bundle.closingId, documentType,
+      expectedCents: selected.expectedCents, knownDocEntry: null, payload: prepared.payload });
+    if (!beforePost.complete || beforePost.matches.length !== 0)
+      throw new Error("Existing or incomplete SAP document evidence blocks the one-document continuation");
+
+    let documents = structuredClone(stored.documents);
+    const attemptStartedAt = this.now();
+    documents[selected.order - 1] = { ...selected, request, requestHash, status: "SENDING",
+      attemptCount: 1, attemptStartedAt, responseReceivedAt: null,
+      attempts: [{ attempt: 1, requestHash, startedAt: attemptStartedAt, responseReceivedAt: null,
+        status: "SENDING", sanitizedError: null }] };
+    let current = await this.save(bundle, stored, documents, "POSTING_PARTIAL");
+    documents = structuredClone(current.documents);
+    try {
+      const result = await this.gateway.post(documentType, prepared.payload);
+      if (!positive(result.docEntry) || !positive(result.docNum) || !positive(result.transId))
+        return this.fail(bundle, current, documents, selected.order - 1, "DOCUMENT_RESPONSE_INCOMPLETE", false);
+      const responseReceivedAt = this.now();
+      documents[selected.order - 1] = { ...documents[selected.order - 1]!,
+        response: sanitize(result.response) as Record<string, unknown>, docEntry: result.docEntry,
+        docNum: result.docNum, transId: result.transId, status: "SENT", responseReceivedAt,
+        attempts: documents[selected.order - 1]!.attempts.map(attempt => ({ ...attempt,
+          responseReceivedAt, status: "SENT" })) };
+      current = await this.save(bundle, current, documents, "POSTING_PARTIAL");
+      documents = structuredClone(current.documents);
+    } catch (error) {
+      if (error instanceof DefiniteGgfDocumentRejection)
+        return this.fail(bundle, current, documents, selected.order - 1,
+          `SAP_REJECTED_HTTP_${error.httpStatus}_CODE_${error.sapCode ?? "UNKNOWN"}`, true);
+      return this.fail(bundle, current, documents, selected.order - 1, "POST_RESPONSE_UNKNOWN", false);
+    }
+    documents[selected.order - 1] = await this.reconcileDocument(bundle, documents[selected.order - 1]!);
+    const error = documents[selected.order - 1]!.status === "RECONCILED" ? null : "DOCUMENT_RECONCILIATION_UNPROVEN";
+    return this.save(bundle, current, documents, "POSTING_PARTIAL", error);
   }
 
   async recoverPrePostFailedExecution(closingId: string, postingPlanVersion: number,
