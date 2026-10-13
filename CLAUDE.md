@@ -297,3 +297,21 @@ Não avance de fase sem a anterior testada e revisada.
 | 2026-09-26 | Primeiro `.mtar` construído com `mbt build`; a tela inicial é a do FactoreOne (nome, versão, módulos e licença), sem conteúdo de exemplo (88 testes e typecheck ok). **Pendente:** importar no Extension Manager e abrir no Web Client; `minUI5Version`/tema `[CONFIRMAR]`; `npm audit` aponta só dependências de desenvolvimento (vitest 2, `@ui5/cli`) | Sem acesso ao ambiente B1 nesta máquina |
 | 2026-09-26 | Instalador de metadados do núcleo (Fase 0): definições declarativas em TS tipado (`webapp/core/data/definitions/`), **não** em `/setup/*.json`; planejador puro (`plan.ts`) + `MetadataInstaller` (lê, planeja, executa em POSTs sequenciais: tabelas → campos → objetos; para na primeira falha; nunca apaga nem altera; divergência de campo vira aviso). Versão instalada por módulo na `FBO_SETUP`, gravada só depois de tudo criado | O UI5 só empacota `webapp/`; JSON fora dele não iria no `.mtar`. Retomada por reexecução (o plano é recalculado do que existe) |
 | 2026-09-26 | `FBO_SETUP`, `FBO_LIC` e `FBO_LOG` modeladas como MasterData com UDO (Code = módulo em SETUP/LIC; em LOG, um UUID gerado pelo cliente; `LogRepository` abre a linha como `RUNNING` e fecha com `OK`/`ERROR`; a rotina não roda se o log não abrir). `FBO_LIC` só com `U_Enabled` (Y/N). **Não validado no servidor:** nomes de propriedades/enums de `UserTablesMD`/`UserFieldsMD`/`UserObjectsMD`, nome da entidade do UDO, formato de hora aceito no `FBO_LOG`, HTTP 404 para tabela/objeto inexistente, formato do `nextLink`, limite de nome de UDF (18) e de campo alfa (254). Testes usam um Service Layer simulado em memória; nenhuma chamada real | Sem servidor de dev no ar; tudo isolado em `plan.ts` e `SetupRepository.ts` para ajustar sem tocar no resto |
+| 2026-10-13 | Adoção exclusivamente documental das Agent Skills, complementando o AGENTS global com regras locais, constraints, workflow, estado e ambientes. Instruções e evidências anteriores preservadas; sem alteração funcional, acesso SAP, instalação, commit, push, deploy ou avanço de fase | Autorização expressa do responsável; plano e validação em `docs/AGENT-SKILLS-INTEGRATION.md` |
+
+## 10. Referências da adoção documental das Agent Skills
+
+Leia [AGENTS.md](AGENTS.md) e [CONSTRAINTS.md](CONSTRAINTS.md) antes de escrever
+código; não enfraqueça as invariantes para fazer uma mudança passar. Esta adoção
+preserva integralmente as instruções e decisões anteriores deste arquivo.
+
+O [índice documental](docs/README.md) reúne os contratos existentes e a
+[matriz contextual das skills](docs/AGENT-SKILLS-WORKFLOW.md). O
+[registro da integração](docs/AGENT-SKILLS-INTEGRATION.md) contém autorização,
+Git inicial, plano e validação. Consulte o
+[estado atual](docs/FACTORYONE-CURRENT-STATE.md) para distinguir implementação,
+prova histórica, proposta e pendência, e a
+[classificação de ambientes e autorizações](docs/ENVIRONMENTS-AND-AUTHORIZATIONS.md)
+antes de operações com efeitos. Provas financeiras pontuais não autorizam novos
+documentos e não homologam o fechamento GGF geral para produção. Industrialização
+continua reservada à sua fase, sem início automático.

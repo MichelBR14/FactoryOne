@@ -260,3 +260,21 @@ webapp/modules/ggf/view/Closing.view.xml
 Artefatos regenerados (ja ignorados pelo Git): `factoreone.module/`,
 `resources/factoreoneapp.zip`, `mta_archives/ext-factoreone_0.1.0.mtar`.
 O `.gitignore` permanece com a alteracao local recebida, sem edicao desta entrega.
+
+## Adocao documental das Agent Skills — 13/10/2026
+
+Foi aprovada a integracao exclusivamente documental das Agent Skills, como
+processo complementar ao AGENTS global. As instrucoes e os registros anteriores
+deste README e do CLAUDE foram preservados; a decisao nao autoriza operacoes SAP,
+mudancas de codigo, novas fases, commit, push ou deploy.
+
+Leia [AGENTS.md](AGENTS.md) e [CONSTRAINTS.md](CONSTRAINTS.md) antes de trabalhar.
+O [indice documental](docs/README.md) organiza os contratos existentes, a
+[matriz contextual das skills](docs/AGENT-SKILLS-WORKFLOW.md), o
+[plano e validacao da integracao](docs/AGENT-SKILLS-INTEGRATION.md), o
+[estado atual e alcance das provas](docs/FACTORYONE-CURRENT-STATE.md) e os
+[ambientes e autorizacoes](docs/ENVIRONMENTS-AND-AUTHORIZATIONS.md).
+Os comandos e resultados anteriores devem ser interpretados no escopo de suas
+etapas; confira o script atual e seus efeitos antes de uma execucao autorizada.
+Provas tecnicas historicas nao liberam novas operacoes financeiras nem declaram
+o fechamento GGF homologado para producao.
